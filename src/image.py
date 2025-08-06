@@ -19,11 +19,10 @@ IMAGE_MIME_TYPES = {
 
 async def image(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Create a new product if necessary
-    user_id = update.effective_user.id
     product = context.chat_data.get("product")
     logger.info(f"Current Product: {product}")
     if (not product or time.time() - product['created_at'] > GROUP_TIMEOUT):
-        product = start_new_product(user_id)
+        product = start_new_product(update.effective_user.id, update.effective_chat.id)
         context.chat_data["product"] = product
 
     # Save images to product folder

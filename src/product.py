@@ -22,11 +22,12 @@ def get_next_product_number():
     return max(ids) + 1
 
 
-def start_new_product(user_id):
+def start_new_product(user_id, chat_id):
     product =  {
         "created_at": time.time(),
         "created_by": user_id,
         "id": str(get_next_product_number()),
+        "chat_id": chat_id
     }
     product["path"] = os.path.join(SAVE_DIR, product["id"])
     os.makedirs(product["path"], exist_ok = True)
