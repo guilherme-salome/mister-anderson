@@ -4,7 +4,7 @@ import sys
 import asyncio
 import openai
 
-from config import read_token
+from .config import read_token
 
 
 openai.api_key = read_token('api.openai.com', 'mister-anderson-bot')
