@@ -18,7 +18,7 @@ logging.basicConfig(
 
 
 def main():
-    application = ApplicationBuilder().token(read_token()).build()
+    application = ApplicationBuilder().token(read_token('api.telegram.com')).build()
     text_handler = MessageHandler(filters.TEXT & (~filters.COMMAND), text)
     image_handler = MessageHandler(filters.PHOTO | filters.Document.IMAGE, image)
 
