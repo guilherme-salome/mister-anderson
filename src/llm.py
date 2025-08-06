@@ -2,7 +2,6 @@
 
 import sys
 import asyncio
-import os
 import openai
 
 from config import read_token
