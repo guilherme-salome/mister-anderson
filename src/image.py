@@ -3,10 +3,12 @@
 import os
 import time
 import logging
+import asyncio
 from telegram import Update
 from telegram.ext import ContextTypes
 
 from .product import start_new_product
+from .llm import process_product_folder
 
 
 logger = logging.getLogger(__name__)
@@ -22,6 +24,8 @@ async def image(update: Update, context: ContextTypes.DEFAULT_TYPE):
     product = context.chat_data.get("product")
     logger.info(f"Current Product: {product}")
     if (not product or time.time() - product['created_at'] > GROUP_TIMEOUT):
+        if product:
+            asyncio.create_task(process_product_folder(product, context))
         product = start_new_product(update.effective_user.id, update.effective_chat.id)
         context.chat_data["product"] = product
 
