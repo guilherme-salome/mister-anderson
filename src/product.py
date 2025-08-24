@@ -4,7 +4,11 @@ import logging
 import time
 
 
-SAVE_DIR = "products"
+from telegram import Update
+from telegram.ext import ContextTypes
+
+
+SAVE_DIR = "data"
 
 logger = logging.getLogger(__name__)
 
@@ -22,14 +26,17 @@ def get_next_product_number():
     return max(ids) + 1
 
 
-def start_new_product(user_id, chat_id):
+def start_new_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    product_id = str(get_next_product_number())
     product =  {
+        "pickup": context.chat_data.get("pickup"),
         "created_at": time.time(),
-        "created_by": user_id,
-        "id": str(get_next_product_number()),
-        "chat_id": chat_id
+        "created_by": update.effective_user.id,
+        "id": product_id,
+        "chat_id": update.effective_chat.id,
+        "path": os.path.join(SAVE_DIR, product_id),
+        "photos": []
     }
-    product["path"] = os.path.join(SAVE_DIR, product["id"])
     os.makedirs(product["path"], exist_ok = True)
     logger.info(f"New product group created: {product}")
     return product

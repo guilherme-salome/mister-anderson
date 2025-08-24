@@ -7,35 +7,30 @@ import asyncio
 from telegram import Update
 from telegram.ext import ContextTypes
 
-from .product import start_new_product
-from .llm import process_product_folder
+
+from .menu import get_menu
 
 
 logger = logging.getLogger(__name__)
 
-GROUP_TIMEOUT = 600  # seconds (10 min) for auto new group
+
 IMAGE_MIME_TYPES = {
     "image/jpeg", "image/png", "image/gif", "image/bmp", "image/webp", "image/tiff"
 }
 
 
 async def image(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Create a new product if necessary
     product = context.chat_data.get("product")
     logger.info(f"Current Product: {product}")
-    if (not product or time.time() - product['created_at'] > GROUP_TIMEOUT):
-        if product:
-            asyncio.create_task(process_product_folder(product, context))
-        product = start_new_product(update.effective_user.id, update.effective_chat.id)
-        context.chat_data["product"] = product
+    if not product:
+        return
 
-    # Save images to product folder
+    file_path = None
+
     if update.message.photo:
         photo = update.message.photo[-1] # highest resolution available
         file = await context.bot.get_file(photo.file_id)
         file_path = os.path.join(product["path"], f"{photo.file_id}.jpg")
-        await file.download_to_drive(file_path)
-        await update.message.reply_text("Image received and saved!")
 
     if update.message.document:
         doc = update.message.document
@@ -43,7 +38,9 @@ async def image(update: Update, context: ContextTypes.DEFAULT_TYPE):
             file = await context.bot.get_file(doc.file_id)
             ext = doc.file_name.split(".")[-1] if doc.file_name else "img"
             file_path = os.path.join(product["path"], f"{doc.file_id}.{ext}")
-            await file.download_to_drive(file_path)
-            await update.message.reply_text("Image document received and saved!")
-        else:
-            await update.message.reply_text("Document is not an image.")
+
+    if file_path:
+        await file.download_to_drive(file_path)
+        context.chat_data.get("product")["photos"].append(file_path)
+        markup = get_menu(pickup=product["pickup"], product=product)
+        await update.message.reply_text("Image received and saved!", reply_markup=markup)

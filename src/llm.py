@@ -5,6 +5,9 @@ import sys
 import asyncio
 import openai
 import logging
+import json
+import re
+
 
 from .config import read_token
 
@@ -39,7 +42,8 @@ async def ask_with_images(client, images, prompt):
     return response.output_text
 
 
-async def process_product_folder(product, context):
+async def process_product_folder(update, context):
+    product = context.chat_data.get("product")
     logger.info(f"Processing Product with OpenAI: {product}")
     client = openai.AsyncOpenAI(api_key=openai.api_key)
 
@@ -52,16 +56,31 @@ async def process_product_folder(product, context):
         logger.info(f"No Images Available for Product: {product}")
         return
 
-    prompt = "Describe this product and list technical specifications."
+    prompt = """
+Extract product information from the attached image(s).
+Return the answer strictly in JSON format with the following fields:
+- serial_number: (string)
+- short_description: (string)
+- commodity: (string, e.g. laptop, hard drive, etc.)
+Example:
+{
+  "serial_number": "ABC12345",
+  "short_description": "Black wireless keyboard with numeric pad",
+  "commodity": "keyboard"
+}
+Warning: Only JSON content should be returned. No explanations, no formatting, no code fences.
+"""
     description = await ask_with_images(client, images, prompt)
-    specs_path = os.path.join(product["path"], "specs.txt")
-    with open(specs_path, "w") as f:
-        f.write(description)
-    if product["chat_id"]:
-        await context.bot.send_message(
-            chat_id=product["chat_id"],
-            text=f"Product description and specifications have been generated!\n{description}"
-        )
+    logger.info(f"Description: {description}")
+    context.chat_data.get("product")["description"] = description
+    try:
+        parsed = json.loads(description)
+        logger.info(f"Parsed Description: {parsed}")
+    except:
+        logger.warning("Description from LLM could not be parsed as JSON.")
+    else:
+        context.chat_data.get("product")["parsed"] = description
+    logger.info("Analysis Complete.")
 
 
 if __name__ == '__main__':
