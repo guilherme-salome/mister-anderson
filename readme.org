@@ -1,0 +1,4 @@
+#+title: Readme
+
+* Planning
+** TODO Structure data folder with date/pickup/product
