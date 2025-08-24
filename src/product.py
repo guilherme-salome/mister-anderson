@@ -1,42 +1,47 @@
 #!/usr/bin/env python3
-import os
-import logging
+from dataclasses import dataclass, field
+from typing import List, Optional
 import time
+import datetime
+import os
+import tempfile
+import hashlib
+import shutil
+import logging
+import atexit
 
-
-from telegram import Update
-from telegram.ext import ContextTypes
-
-
-SAVE_DIR = "data"
 
 logger = logging.getLogger(__name__)
 
 
-def get_next_product_number():
-    """
-    Scans the SAVE_DIR for numeric folder names and
-    returns the next unused product number (int).
-    """
-    ids = set([0])
-    os.makedirs(SAVE_DIR, exist_ok = True)
-    for name in os.listdir(SAVE_DIR):
-        if name.isdigit():
-            ids.add(int(name))
-    return max(ids) + 1
+@dataclass
+class Product:
+    created_by: str
+    tempdir: str = field(default_factory=tempfile.mkdtemp)
+    created_at: str = field(default_factory=lambda: str(datetime.datetime.today()))
+    photos: List[str] = field(default_factory=list)
+    pickup: Optional[str] = None
+
+    @property
+    def asset_tag(self) -> str:
+        to_hash = f"{self.created_at}-{self.created_by}"
+        digest = hashlib.sha1(to_hash.encode()).hexdigest()[:10]  # first 10 chars
+        logger.info(f"Asset tag is {digest}")
+        return digest
+
+    def __post_init__(self):
+        logger.info(f"New Instance of {repr(self)}")
+        atexit.register(self.clean_tempdir)
+
+    def clean_tempdir(self):
+        logger.info(f"Cleaning up {self.tempdir}")
+        shutil.rmtree(self.tempdir, ignore_errors = True)
 
 
-def start_new_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    product_id = str(get_next_product_number())
-    product =  {
-        "pickup": context.chat_data.get("pickup"),
-        "created_at": time.time(),
-        "created_by": update.effective_user.id,
-        "id": product_id,
-        "chat_id": update.effective_chat.id,
-        "path": os.path.join(SAVE_DIR, product_id),
-        "photos": []
-    }
-    os.makedirs(product["path"], exist_ok = True)
-    logger.info(f"New product group created: {product}")
-    return product
+if __name__ == "__main__":
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(filename)s %(funcName)s %(levelname)s: %(message)s"
+    )
+    product = Product("testing-user")
+    product.asset_tag
