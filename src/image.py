@@ -8,7 +8,7 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 
-from .menu import get_menu
+from .menu import render
 
 
 logger = logging.getLogger(__name__)
@@ -42,5 +42,5 @@ async def image(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if file_path:
         await file.download_to_drive(file_path)
         context.chat_data.get("product")["photos"].append(file_path)
-        markup = get_menu(pickup=product["pickup"], product=product)
+        markup = render(pickup=product["pickup"], product=product)
         await update.message.reply_text("Image received and saved!", reply_markup=markup)

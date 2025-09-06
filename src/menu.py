@@ -1,80 +1,169 @@
 #!/usr/bin/env python3
 
 import logging
+from typing import Optional
 
-
+from enum import Enum
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ForceReply
 from telegram.ext import ContextTypes
 
 
 from .llm import process_product_folder
-from .product import start_new_product
+from .product import Product
 
 
 logger = logging.getLogger(__name__)
 
 
-def get_menu(pickup=None, product=None):
-    logger.info(f"Pickup: {pickup}")
-    logger.info(f"Product: {product}")
-    keyboard = [[
-        InlineKeyboardButton(
-            "🚚 Pickup: " + (str(pickup) if pickup else "<not set>"),
-            callback_data="kbd_pickup"
-        )
-    ]]
-    if pickup is not None and product is None:
-        logger.info(f"Menu: New Product")
-        keyboard.append(
-            [
-                InlineKeyboardButton("📝 New Product", callback_data="kbd_new"),
-            ]
-        )
-    if pickup is not None and product is not None:
-        keyboard.append([
-            InlineKeyboardButton(
-                f"📷 Send Photo ({len(product['photos'])})",
-                callback_data="kbd_photo"
-            )
-        ])
-        # keyboard.append([InlineKeyboardButton("📦 Quantity", callback_data="kbd_quantity")])
-        keyboard.append([InlineKeyboardButton("🤖 Analyze Product", callback_data="kbd_analyze")])
-
-        # keyboard.append([InlineKeyboardButton("✅ Submit Product", callback_data="kbd_end")])
-    return InlineKeyboardMarkup(keyboard)
+class State(str, Enum):
+    INIT = "INIT"                # no pickup set
+    READY = "READY"              # pickup set, no product yet
+    PRODUCT = "PRODUCT"          # gathering photos etc.
+    ANALYZING = "ANALYZING"      # parsing photos and other information
+    REVIEW = "REVIEW"            # user reviews and updates what is necessary
+    DONE = "DONE"                # after confirmation
 
 
-async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def render(state: str, product: Optional[Product] = None):
+
+    if state is not State.INIT and product is None:
+        raise ValueError(f"product is required when state is {state}")
+
+    if state == State.INIT:
+        kb = [[InlineKeyboardButton("🚚 Set Pickup", callback_data="act:set:pickup")]]
+
+    if state == State.READY:
+        kb = [[
+            InlineKeyboardButton(f"🚚 Pickup: {product.pickup}", callback_data="act:set:pickup"),
+            InlineKeyboardButton("📝 New Product", callback_data="act:set:product"),
+        ]]
+
+    if state == State.PRODUCT:
+        kb = [[
+            InlineKeyboardButton(f"🚚 Pickup: {product.pickup}", callback_data="act:set:pickup"),
+            InlineKeyboardButton(f"📝 Product Tag: {product.asset_tag}", callback_data="noop:set:tag"),
+            InlineKeyboardButton(f"📦 Quantity: {product.quantity}", callback_data="act:set:quantity"),
+            InlineKeyboardButton(f"📷 Send Photo ({len(product.photos)})", callback_data="act:send:photo"),
+            InlineKeyboardButton("🤖 Analyze Product", callback_data="act:analyze")
+        ]]
+
+    if state == State.ANALYZING:
+        pass
+
+    if state == State.REVIEW:
+        kb = [[
+            InlineKeyboardButton(f"🚚 Pickup: {product.pickup}", callback_data="act:set:pickup"),
+            InlineKeyboardButton(f"📝 Product Tag: {product.asset_tag}", callback_data="noop:set:tag"),
+            InlineKeyboardButton(f"📦 Quantity: {product.quantity}", callback_data="act:set:quantity"),
+            InlineKeyboardButton("✅ Submit Product", callback_data="act:submit"),
+        ]]
+
+    if state == State.DONE:
+        kb = [[
+            InlineKeyboardButton(f"🚚 Pickup: {product.pickup}", callback_data="act:set:pickup"),
+            InlineKeyboardButton("📝 New Product", callback_data="act:set:product"),
+        ]]
+
+    return InlineKeyboardMarkup(kb)
+
+
+async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    data = query.data
-    logger.info(f"Button: {data}")
-    # Handle button click
-    if data == "kbd_pickup":
-        await handle_kbd_pickup(update, context)
+    data = query.data or ""
+    parts = data.split(":", 2)  # e.g., act:edit:serial_number
+    if not parts or parts[0] != "act":
         return
-    elif data == "kbd_new":
-        await handle_kbd_new(update, context)
+
+    action = parts[1] if len(parts) > 1 else ""
+    arg = parts[2] if len(parts) > 2 else None
+
+    if action == "noop":
         return
-    elif data == "kbd_photo":
-        await handle_kbd_photo(update, context)
+
+    if action == "restart":
+        session.clear()
+        ensure_session(context)
+        return await send_or_edit(update, context)
+
+    if action == "set_pickup":
+        session["awaiting"] = "pickup"
+        msg = await q.message.reply_text("Pickup number:", reply_markup=ForceReply(selective=True))
+        session["await_msg_id"] = msg.message_id
         return
-    elif data == "kbd_analyze":
+
+    if action == "start_product":
+        # Make sure you implement start_new_product(user_id, chat_id, pickup) to return a dict
+        session["product"] = start_new_product(update.effective_user.id, update.effective_chat.id, pickup=session.get("pickup"))
+        session["state"] = State.PRODUCT
+        return await send_or_edit(update, context)
+
+    if action == "add_photo_hint":
+        await q.message.reply_text("Tap the 📎 and send one or more photos of the product.")
+        return
+
+    if action == "analyze":
+        if not session.get("product"):
+            return
+        session["state"] = State.ANALYZING
+        await send_or_edit(update, context)
+        # Run analysis; when done, move to REVIEW and re-render
         await process_product_folder(update, context)
-        # asyncio.create_task(process_product_folder(context.chat_data["product"], context))
-    # elif data == "kbd_quantity":
-    #     await handle_kbd_quantity(update, context)
-    #     return
-    # elif data == "kbd_end":
-    #     asyncio.create_task(process_product_folder(context.chat_data["product"], context))
-    #     await query.message.reply_text(f"Ended product for Pickup {pickup_number}.")
-    product = context.chat_data.get("product")
-    markup = get_menu(product["pickup"], product)
-    await query.message.reply_text("Please choose:", reply_markup=markup)
+        session["state"] = State.REVIEW
+        return await send_or_edit(update, context)
+
+    if action == "edit" and arg:
+        session["awaiting"] = f"edit:{arg}"
+        msg = await q.message.reply_text(f"Enter new {arg}:", reply_markup=ForceReply(selective=True))
+        session["await_msg_id"] = msg.message_id
+        return
+
+    if action == "confirm":
+        # TODO: finalize submission here (persist, notify, etc.)
+        session["state"] = State.DONE
+        return await send_or_edit(update, context)
+
+    if action == "back_to_product":
+        session["state"] = State.PRODUCT
+        return await send_or_edit(update, context)
+
+    if action == "cancel_product":
+        session["product"] = None
+        session["state"] = State.READY if session.get("pickup") else State.INIT
+        return await send_or_edit(update, context)
+
+    await send_or_edit(update, context)
+
+# async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+#     query = update.callback_query
+#     await query.answer()
+#     data = query.data
+#     logger.info(f"Button: {data}")
+#     # Handle button click
+#     if data == "kbd_pickup":
+#         await handle_kbd_pickup(update, context)
+#         return
+#     elif data == "kbd_new":
+#         await handle_kbd_new(update, context)
+#         return
+#     elif data == "kbd_photo":
+#         await handle_kbd_photo(update, context)
+#         return
+#     elif data == "kbd_analyze":
+#         await process_product_folder(update, context)
+#         # asyncio.create_task(process_product_folder(context.chat_data["product"], context))
+#     # elif data == "kbd_quantity":
+#     #     await handle_kbd_quantity(update, context)
+#     #     return
+#     # elif data == "kbd_end":
+#     #     asyncio.create_task(process_product_folder(context.chat_data["product"], context))
+#     #     await query.message.reply_text(f"Ended product for Pickup {pickup_number}.")
+#     product = context.chat_data.get("product")
+#     markup = get_menu(product["pickup"], product)
+#     await query.message.reply_text("Please choose:", reply_markup=markup)
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    markup = get_menu(context.chat_data.get("pickup"))
     message = """
 Hello! I’m Mr. Anderson, your assistant for processing deliveries.
 
@@ -83,8 +172,8 @@ Just send me a product photo to get started, and I’ll do the rest!
 
 Please choose:
     """
-    context.chat_data["pickup"] = None
-    await update.message.reply_text(message, reply_markup=markup)
+    context.chat_data["state"] = State.INIT
+    await update.message.reply_text(message, reply_markup=render(State.INIT))
 
 
 async def handle_kbd_pickup(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -116,50 +205,50 @@ async def pickup_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not number.isdigit():
         await update.message.reply_text(
             "Pickup number can only have digits, please try again.",
-            reply_markup=get_menu()
+            reply_markup=render()
         )
         return
 
     context.chat_data["pickup"] = number
     await update.message.reply_text(
         f"Pickup number set to {number}.",
-        reply_markup=get_menu(number)
+        reply_markup=render(number)
     )
 
     # Clear the prompt ID so random replies don’t trigger again
     context.chat_data.pop("kbd_pickup_prompt_id", None)
 
 
-async def handle_kbd_new(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    product = start_new_product(update, context)
-    context.chat_data["product"] = product
-    await query.message.reply_text(
-        f"Started new product. Please send pictures of the product.",
-        reply_markup = get_menu(product["pickup"], product)
-    )
+# async def handle_kbd_new(update: Update, context: ContextTypes.DEFAULT_TYPE):
+#     query = update.callback_query
+#     await query.answer()
+#     product = start_new_product(update, context)
+#     context.chat_data["product"] = product
+#     await query.message.reply_text(
+#         f"Started new product. Please send pictures of the product.",
+#         reply_markup = get_menu(product["pickup"], product)
+#     )
 
 
-async def handle_kbd_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    msg = await query.message.reply_text(
-        "Now please tap the 📎 (attachment) icon and take or select one or more photos of the product!",
-        reply_markup=ForceReply(selective=True)
-    )
+# async def handle_kbd_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+#     query = update.callback_query
+#     await query.answer()
+#     msg = await query.message.reply_text(
+#         "Now please tap the 📎 (attachment) icon and take or select one or more photos of the product!",
+#         reply_markup=ForceReply(selective=True)
+#     )
 
-async def handle_kbd_new(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    product = start_new_product(update, context)
-    context.chat_data["product"] = product
-    await query.message.reply_text(
-        f"Started new product. Please send pictures of the product.",
-        reply_markup = get_menu(product["pickup"], product)
-    )
+# async def handle_kbd_new(update: Update, context: ContextTypes.DEFAULT_TYPE):
+#     query = update.callback_query
+#     await query.answer()
+#     product = start_new_product(update, context)
+#     context.chat_data["product"] = product
+#     await query.message.reply_text(
+#         f"Started new product. Please send pictures of the product.",
+#         reply_markup = get_menu(product["pickup"], product)
+#     )
 
 
 
-async def handle_kbd_end(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    return
+# async def handle_kbd_end(update: Update, context: ContextTypes.DEFAULT_TYPE):
+#     return

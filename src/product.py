@@ -20,12 +20,13 @@ class Product:
     tempdir: str = field(default_factory=tempfile.mkdtemp)
     created_at: str = field(default_factory=lambda: str(datetime.datetime.today()))
     photos: List[str] = field(default_factory=list)
+    quantity: int = field(default_factory=lambda: 1)
     pickup: Optional[str] = None
 
     @property
     def asset_tag(self) -> str:
         to_hash = f"{self.created_at}-{self.created_by}"
-        digest = hashlib.sha1(to_hash.encode()).hexdigest()[:10]  # first 10 chars
+        digest = hashlib.sha1(to_hash.encode()).hexdigest()
         logger.info(f"Asset tag is {digest}")
         return digest
 
