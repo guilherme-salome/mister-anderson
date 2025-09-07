@@ -24,7 +24,23 @@ class State(str, Enum):
     DONE = "DONE"                # after confirmation
 
 
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    message = """
+Hello! I’m Mr. Anderson, your assistant for processing deliveries.
+
+I can help you quickly and accurately enter product details after a pickup by analyzing images and generating clear product descriptions.
+Just send me a product photo to get started, and I’ll do the rest!
+
+Please choose:
+    """
+    context.chat_data["state"] = State.INIT
+    context.chat_data["product"] = Product(created_by = update.effective_user.id)
+    markup = render(context.chat_data["state"], context.chat_data["product"])
+    await update.message.reply_text(message, reply_markup=markup)
+
+
 def render(state: str, product: Optional[Product] = None):
+    logger.info(f"State: {state}")
 
     if state is not State.INIT and product is None:
         raise ValueError(f"product is required when state is {state}")
@@ -78,61 +94,60 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     action = parts[1] if len(parts) > 1 else ""
     arg = parts[2] if len(parts) > 2 else None
 
+    logger.info(f"Callback: {action} {arg}")
+
     if action == "noop":
         return
 
-    if action == "restart":
-        session.clear()
-        ensure_session(context)
-        return await send_or_edit(update, context)
-
-    if action == "set_pickup":
-        session["awaiting"] = "pickup"
-        msg = await q.message.reply_text("Pickup number:", reply_markup=ForceReply(selective=True))
-        session["await_msg_id"] = msg.message_id
-        return
-
-    if action == "start_product":
-        # Make sure you implement start_new_product(user_id, chat_id, pickup) to return a dict
-        session["product"] = start_new_product(update.effective_user.id, update.effective_chat.id, pickup=session.get("pickup"))
-        session["state"] = State.PRODUCT
-        return await send_or_edit(update, context)
-
-    if action == "add_photo_hint":
-        await q.message.reply_text("Tap the 📎 and send one or more photos of the product.")
-        return
-
-    if action == "analyze":
-        if not session.get("product"):
+    if action == "set":
+        if arg == "pickup":
+            msg = await query.message.reply_text("Pickup number:", reply_markup=ForceReply(selective=True))
+            context.chat_data["awaiting"] = "pickup"
+            context.chat_data["awaiting_id"] = msg.message_id
+            logger.info(f"Message ID: {msg.message_id} (pickup)")
             return
-        session["state"] = State.ANALYZING
-        await send_or_edit(update, context)
-        # Run analysis; when done, move to REVIEW and re-render
-        await process_product_folder(update, context)
-        session["state"] = State.REVIEW
-        return await send_or_edit(update, context)
 
-    if action == "edit" and arg:
-        session["awaiting"] = f"edit:{arg}"
-        msg = await q.message.reply_text(f"Enter new {arg}:", reply_markup=ForceReply(selective=True))
-        session["await_msg_id"] = msg.message_id
-        return
+    # if action == "start_product":
+    #     # Make sure you implement start_new_product(user_id, chat_id, pickup) to return a dict
+    #     session["product"] = start_new_product(update.effective_user.id, update.effective_chat.id, pickup=session.get("pickup"))
+    #     session["state"] = State.PRODUCT
+    #     return await send_or_edit(update, context)
 
-    if action == "confirm":
-        # TODO: finalize submission here (persist, notify, etc.)
-        session["state"] = State.DONE
-        return await send_or_edit(update, context)
+    # if action == "add_photo_hint":
+    #     await q.message.reply_text("Tap the 📎 and send one or more photos of the product.")
+    #     return
 
-    if action == "back_to_product":
-        session["state"] = State.PRODUCT
-        return await send_or_edit(update, context)
+    # if action == "analyze":
+    #     if not session.get("product"):
+    #         return
+    #     session["state"] = State.ANALYZING
+    #     await send_or_edit(update, context)
+    #     # Run analysis; when done, move to REVIEW and re-render
+    #     await process_product_folder(update, context)
+    #     session["state"] = State.REVIEW
+    #     return await send_or_edit(update, context)
 
-    if action == "cancel_product":
-        session["product"] = None
-        session["state"] = State.READY if session.get("pickup") else State.INIT
-        return await send_or_edit(update, context)
+    # if action == "edit" and arg:
+    #     session["awaiting"] = f"edit:{arg}"
+    #     msg = await q.message.reply_text(f"Enter new {arg}:", reply_markup=ForceReply(selective=True))
+    #     session["await_msg_id"] = msg.message_id
+    #     return
 
-    await send_or_edit(update, context)
+    # if action == "confirm":
+    #     # TODO: finalize submission here (persist, notify, etc.)
+    #     session["state"] = State.DONE
+    #     return await send_or_edit(update, context)
+
+    # if action == "back_to_product":
+    #     session["state"] = State.PRODUCT
+    #     return await send_or_edit(update, context)
+
+    # if action == "cancel_product":
+    #     session["product"] = None
+    #     session["state"] = State.READY if session.get("pickup") else State.INIT
+    #     return await send_or_edit(update, context)
+
+    # await send_or_edit(update, context)
 
 # async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 #     query = update.callback_query
@@ -162,62 +177,81 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 #     markup = get_menu(product["pickup"], product)
 #     await query.message.reply_text("Please choose:", reply_markup=markup)
 
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    message = """
-Hello! I’m Mr. Anderson, your assistant for processing deliveries.
-
-I can help you quickly and accurately enter product details after a pickup by analyzing images and generating clear product descriptions.
-Just send me a product photo to get started, and I’ll do the rest!
-
-Please choose:
-    """
-    context.chat_data["state"] = State.INIT
-    await update.message.reply_text(message, reply_markup=render(State.INIT))
+# async def handle_kbd_pickup(update: Update, context: ContextTypes.DEFAULT_TYPE):
+#     query = update.callback_query
+#     await query.answer()
+#     msg = await query.message.reply_text(
+#         "Pickup number:",
+#         reply_markup=ForceReply(selective=True)
+#     )
+#     logger.info(f"Message ID: {msg.message_id}")
+#     context.chat_data["kbd_pickup_prompt_id"] = msg.message_id
 
 
-async def handle_kbd_pickup(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    msg = await query.message.reply_text(
-        "Pickup number:",
-        reply_markup=ForceReply(selective=True)
-    )
-    logger.info(f"Message ID: {msg.message_id}")
-    context.chat_data["kbd_pickup_prompt_id"] = msg.message_id
+# async def pickup_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
+#     prompt_id = context.chat_data.get("kbd_pickup_prompt_id")
+#     logger.info(f"Reply - Message ID: {prompt_id}")
+
+#     if not prompt_id:
+#         return  # no active prompt, ignore
+
+#     if not update.message.reply_to_message:
+#         return  # not a reply at all, ignore
+
+#     if update.message.reply_to_message.message_id != prompt_id:
+#         return  # reply, but not to our prompt, ignore
+
+#     # Now we know it's a valid pickup reply
+#     number = update.message.text.strip()
+#     if not number.isdigit():
+#         await update.message.reply_text(
+#             "Pickup number can only have digits, please try again.",
+#             reply_markup=render()
+#         )
+#         return
+
+#     context.chat_data["pickup"] = number
+#     await update.message.reply_text(
+#         f"Pickup number set to {number}.",
+#         reply_markup=render(number)
+#     )
+
+#     # Clear the prompt ID so random replies don’t trigger again
+#     context.chat_data.pop("kbd_pickup_prompt_id", None)
 
 
-async def pickup_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    prompt_id = context.chat_data.get("kbd_pickup_prompt_id")
-    logger.info(f"Reply - Message ID: {prompt_id}")
+async def on_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
-    if not prompt_id:
-        return  # no active prompt, ignore
+    awaiting = context.chat_data.get("awaiting")
+    awaiting_id = context.chat_data.get("awaiting_id")
+    logger.info(f"Replying to ID: {awaiting_id} ({awaiting})")
 
-    if not update.message.reply_to_message:
-        return  # not a reply at all, ignore
-
-    if update.message.reply_to_message.message_id != prompt_id:
-        return  # reply, but not to our prompt, ignore
-
-    # Now we know it's a valid pickup reply
-    number = update.message.text.strip()
-    if not number.isdigit():
-        await update.message.reply_text(
-            "Pickup number can only have digits, please try again.",
-            reply_markup=render()
-        )
+    if not awaiting:
+        return
+    if not getattr(update, "message", None) or not update.message.reply_to_message:
+        return
+    if update.message.reply_to_message.message_id != awaiting_id:
+        logger.info(f"Reply Message ID: {update.message.reply_to_message.message_id}")
         return
 
-    context.chat_data["pickup"] = number
-    await update.message.reply_text(
-        f"Pickup number set to {number}.",
-        reply_markup=render(number)
-    )
+    text = (update.message.text or "").strip()
 
-    # Clear the prompt ID so random replies don’t trigger again
-    context.chat_data.pop("kbd_pickup_prompt_id", None)
+    if awaiting == "pickup":
 
+        if text.isdigit():
+            context.chat_data["product"].pickup = text
+            context.chat_data["state"] = State.READY
+        else:
+            await update.message.reply_text("Pickup must be digits. Try again.")
+            return
+
+        # clear 'awaiting' state
+        context.chat_data.pop("awaiting", None)
+        context.chat_data.pop("awaiting_id", None)
+
+
+        markup = render(context.chat_data["state"], context.chat_data["product"])
+        return await update.message.reply_text(f"Pickup number set to {text}.", reply_markup = markup)
 
 # async def handle_kbd_new(update: Update, context: ContextTypes.DEFAULT_TYPE):
 #     query = update.callback_query

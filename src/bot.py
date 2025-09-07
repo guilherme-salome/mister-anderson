@@ -9,7 +9,7 @@ from telegram.ext import filters, MessageHandler, ApplicationBuilder, CommandHan
 from .config import read_token
 from .image import image
 from .text import text
-from .menu import start, on_callback, pickup_reply
+from .menu import start, on_callback, on_reply
 
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -21,7 +21,7 @@ def main():
     application = ApplicationBuilder().token(read_token('api.telegram.com')).build()
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CallbackQueryHandler(on_callback, pattern="^act:"))
-    # application.add_handler(MessageHandler(filters.TEXT, on_reply))
+    application.add_handler(MessageHandler(filters.TEXT, on_reply))
     application.add_handler(MessageHandler(filters.PHOTO | filters.Document.IMAGE, image))
     application.run_polling()
 
