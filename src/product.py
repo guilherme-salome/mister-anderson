@@ -26,7 +26,7 @@ class Product:
     @property
     def asset_tag(self) -> str:
         to_hash = f"{self.created_at}-{self.created_by}"
-        digest = hashlib.sha1(to_hash.encode()).hexdigest()
+        digest = hashlib.sha1(to_hash.encode()).hexdigest()[:10]
         logger.info(f"Asset tag is {digest}")
         return digest
 
