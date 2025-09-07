@@ -49,36 +49,36 @@ def render(state: str, product: Optional[Product] = None):
         kb = [[InlineKeyboardButton("🚚 Set Pickup", callback_data="act:set:pickup")]]
 
     if state == State.READY:
-        kb = [[
-            InlineKeyboardButton(f"🚚 Pickup: {product.pickup}", callback_data="act:set:pickup"),
-            InlineKeyboardButton("📝 New Product", callback_data="act:set:product"),
-        ]]
+        kb = [
+            [InlineKeyboardButton(f"🚚 Pickup: {product.pickup}", callback_data="act:set:pickup")],
+            [InlineKeyboardButton("📝 New Product", callback_data="act:set:product")],
+        ]
 
     if state == State.PRODUCT:
-        kb = [[
-            InlineKeyboardButton(f"🚚 Pickup: {product.pickup}", callback_data="act:set:pickup"),
-            InlineKeyboardButton(f"📝 Product Tag: {product.asset_tag}", callback_data="noop:set:tag"),
-            InlineKeyboardButton(f"📦 Quantity: {product.quantity}", callback_data="act:set:quantity"),
-            InlineKeyboardButton(f"📷 Send Photo ({len(product.photos)})", callback_data="act:send:photo"),
-            InlineKeyboardButton("🤖 Analyze Product", callback_data="act:analyze")
-        ]]
+        kb = [
+            [InlineKeyboardButton(f"🚚 Pickup: {product.pickup}", callback_data="act:set:pickup")],
+            [InlineKeyboardButton(f"📝 Product Tag: {product.asset_tag}", callback_data="noop:set:tag")],
+            [InlineKeyboardButton(f"📦 Quantity: {product.quantity}", callback_data="act:set:quantity")],
+            [InlineKeyboardButton(f"📷 Send Photo ({len(product.photos)})", callback_data="act:send:photo")],
+            [InlineKeyboardButton("🤖 Analyze Product", callback_data="act:analyze")],
+        ]
 
     if state == State.ANALYZING:
         pass
 
     if state == State.REVIEW:
-        kb = [[
-            InlineKeyboardButton(f"🚚 Pickup: {product.pickup}", callback_data="act:set:pickup"),
-            InlineKeyboardButton(f"📝 Product Tag: {product.asset_tag}", callback_data="noop:set:tag"),
-            InlineKeyboardButton(f"📦 Quantity: {product.quantity}", callback_data="act:set:quantity"),
-            InlineKeyboardButton("✅ Submit Product", callback_data="act:submit"),
-        ]]
+        kb = [
+            [InlineKeyboardButton(f"🚚 Pickup: {product.pickup}", callback_data="act:set:pickup")],
+            [InlineKeyboardButton(f"📝 Product Tag: {product.asset_tag}", callback_data="noop:set:tag")],
+            [InlineKeyboardButton(f"📦 Quantity: {product.quantity}", callback_data="act:set:quantity")],
+            [InlineKeyboardButton("✅ Submit Product", callback_data="act:submit")],
+        ]
 
     if state == State.DONE:
-        kb = [[
-            InlineKeyboardButton(f"🚚 Pickup: {product.pickup}", callback_data="act:set:pickup"),
-            InlineKeyboardButton("📝 New Product", callback_data="act:set:product"),
-        ]]
+        kb = [
+            [InlineKeyboardButton(f"🚚 Pickup: {product.pickup}", callback_data="act:set:pickup")],
+            [InlineKeyboardButton("📝 New Product", callback_data="act:set:product")],
+        ]
 
     return InlineKeyboardMarkup(kb)
 
@@ -100,6 +100,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if action == "set":
+
         if arg == "pickup":
             msg = await query.message.reply_text("Pickup number:", reply_markup=ForceReply(selective=True))
             context.chat_data["awaiting"] = "pickup"
@@ -107,11 +108,17 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.info(f"Message ID: {msg.message_id} (pickup)")
             return
 
-    # if action == "start_product":
-    #     # Make sure you implement start_new_product(user_id, chat_id, pickup) to return a dict
-    #     session["product"] = start_new_product(update.effective_user.id, update.effective_chat.id, pickup=session.get("pickup"))
-    #     session["state"] = State.PRODUCT
-    #     return await send_or_edit(update, context)
+        if arg == "product":
+            product = context.chat_data.get("product")
+            pickup = product.pickup
+            logger.info(f"Removing Product: {product}")
+            context.chat_data["product"] = Product(created_by = update.effective_user.id)
+            context.chat_data["state"] = State.PRODUCT
+            return await query.message.reply_text(
+                f"Started new product. Please send pictures of the product.",
+                reply_markup = render(context.chat_data["state"], context.chat_data["product"])
+            )
+
 
     # if action == "add_photo_hint":
     #     await q.message.reply_text("Tap the 📎 and send one or more photos of the product.")
@@ -248,7 +255,6 @@ async def on_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # clear 'awaiting' state
         context.chat_data.pop("awaiting", None)
         context.chat_data.pop("awaiting_id", None)
-
 
         markup = render(context.chat_data["state"], context.chat_data["product"])
         return await update.message.reply_text(f"Pickup number set to {text}.", reply_markup = markup)
