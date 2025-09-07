@@ -10,6 +10,7 @@ import re
 
 
 from .config import read_token
+from .product import Product
 
 
 logger = logging.getLogger(__name__)
@@ -42,15 +43,15 @@ async def ask_with_images(client, images, prompt):
     return response.output_text
 
 
-async def process_product_folder(update, context):
-    product = context.chat_data.get("product")
+async def process_product_folder(product: Product):
     logger.info(f"Processing Product with OpenAI: {product}")
     client = openai.AsyncOpenAI(api_key=openai.api_key)
 
     images = []
-    for f in os.listdir(product["path"]):
+    for f in os.listdir(product.tempdir):
         if f.lower().endswith((".jpg", ".jpeg", ".png")):
-            images.append(os.path.join(product["path"], f))
+            images.append(os.path.join(product.tempdir, f))
+            logger.info(f"Image Found: {f}")
 
     if not images:
         logger.info(f"No Images Available for Product: {product}")
@@ -62,25 +63,30 @@ Return the answer strictly in JSON format with the following fields:
 - serial_number: (string)
 - short_description: (string)
 - commodity: (string, e.g. laptop, hard drive, etc.)
+- destination: (string, e.g., data sanatization, A1 distribution, recycled, TSD)
 Example:
 {
   "serial_number": "ABC12345",
   "short_description": "Black wireless keyboard with numeric pad",
-  "commodity": "keyboard"
+  "commodity": "keyboard",
+  "destination": "A1 distribution",
 }
 Warning: Only JSON content should be returned. No explanations, no formatting, no code fences.
 """
+
     description = await ask_with_images(client, images, prompt)
+    product.description_raw = description
     logger.info(f"Description: {description}")
-    context.chat_data.get("product")["description"] = description
+
     try:
         parsed = json.loads(description)
         logger.info(f"Parsed Description: {parsed}")
     except:
         logger.warning("Description from LLM could not be parsed as JSON.")
     else:
-        context.chat_data.get("product")["parsed"] = description
+        product.description_json = parsed
     logger.info("Analysis Complete.")
+    return product
 
 
 if __name__ == '__main__':

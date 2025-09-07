@@ -2,6 +2,8 @@
 
 import logging
 from typing import Optional
+import asyncio
+
 
 from enum import Enum
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ForceReply
@@ -59,7 +61,7 @@ def render(state: str, product: Optional[Product] = None):
             [InlineKeyboardButton(f"🚚 Pickup: {product.pickup}", callback_data="act:update:pickup")],
             [InlineKeyboardButton(f"📝 Product Tag: {product.asset_tag}", callback_data="noop:set:tag")],
             [InlineKeyboardButton(f"📦 Quantity: {product.quantity}", callback_data="act:update:quantity")],
-            [InlineKeyboardButton(f"📷 Send Photo ({len(product.photos)})", callback_data="act:send:photo")],
+            [InlineKeyboardButton(f"📷 Send Photo ({len(product.photos)})", callback_data="act:hint:photo")],
             [InlineKeyboardButton("🤖 Analyze Product", callback_data="act:analyze")],
         ]
 
@@ -70,7 +72,11 @@ def render(state: str, product: Optional[Product] = None):
         kb = [
             [InlineKeyboardButton(f"🚚 Pickup: {product.pickup}", callback_data="act:set:pickup")],
             [InlineKeyboardButton(f"📝 Product Tag: {product.asset_tag}", callback_data="noop:set:tag")],
-            [InlineKeyboardButton(f"📦 Quantity: {product.quantity}", callback_data="act:set:quantity")],
+            [InlineKeyboardButton(f"📦 Quantity: {product.quantity}", callback_data="act:update:quantity")],
+            [InlineKeyboardButton(f"🔎 Serial Number: {product.serial_number}", callback_data="act:update:serial_number")],
+            [InlineKeyboardButton(f"🔎 Description: {product.short_description[:10]} ...", callback_data="act:update:description")],
+            [InlineKeyboardButton(f"🔎 Commodity: {product.commodity}", callback_data="act:update:commodity")],
+            [InlineKeyboardButton(f"🔎 Destination: {product.destination}", callback_data="act:update:destination")],
             [InlineKeyboardButton("✅ Submit Product", callback_data="act:submit")],
         ]
 
@@ -135,41 +141,59 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.info(f"Message ID: {msg.message_id} (quantity)")
             return
 
-    # if action == "add_photo_hint":
-    #     await q.message.reply_text("Tap the 📎 and send one or more photos of the product.")
-    #     return
+        if arg in ("serial_number", "short_description", "commodity", "destination"):
+            msg = await query.message.reply_text(arg.replace("_", " ").title(), reply_markup=ForceReply(selective=True))
+            context.chat_data["awaiting"] = arg
+            context.chat_data["awaiting_id"] = msg.message_id
+            logger.info(f"Message ID: {msg.message_id} ({arg})")
+            return
 
-    # if action == "analyze":
-    #     if not session.get("product"):
-    #         return
-    #     session["state"] = State.ANALYZING
-    #     await send_or_edit(update, context)
-    #     # Run analysis; when done, move to REVIEW and re-render
-    #     await process_product_folder(update, context)
-    #     session["state"] = State.REVIEW
-    #     return await send_or_edit(update, context)
+    if action == "hint":
 
-    # if action == "edit" and arg:
-    #     session["awaiting"] = f"edit:{arg}"
-    #     msg = await q.message.reply_text(f"Enter new {arg}:", reply_markup=ForceReply(selective=True))
-    #     session["await_msg_id"] = msg.message_id
-    #     return
+        if arg == "photo":
+            return await query.message.reply_text("Tap the 📎 and send one or more photos of the product.")
 
-    # if action == "confirm":
-    #     # TODO: finalize submission here (persist, notify, etc.)
-    #     session["state"] = State.DONE
-    #     return await send_or_edit(update, context)
+    if action == "analyze":
+        context.chat_data["state"] = State.ANALYZING
 
-    # if action == "back_to_product":
-    #     session["state"] = State.PRODUCT
-    #     return await send_or_edit(update, context)
+        # Edit the callback message so user sees analysis started and buttons are removed
+        await query.edit_message_text("Analyzing images — this can take a minute. I'll notify you when done...")
 
-    # if action == "cancel_product":
-    #     session["product"] = None
-    #     session["state"] = State.READY if session.get("pickup") else State.INIT
-    #     return await send_or_edit(update, context)
+        chat_id = update.effective_chat.id
+        application = context.application  # persistent application instance
 
-    # await send_or_edit(update, context)
+        async def _background_analyze(chat_id, application):
+            try:
+                # Access the persistent chat_data for this chat (safer than using the ephemeral context)
+                chat_data = application.chat_data.get(chat_id, {})
+                product = chat_data.get("product")
+                if not product:
+                    await application.bot.send_message(chat_id=chat_id, text="No product to analyze.")
+                    return
+
+                updated_product = await process_product_folder(product)
+
+                # store back into persistent chat_data and move to REVIEW
+                if chat_id not in application.chat_data:
+                    application.chat_data[chat_id] = {}
+                application.chat_data[chat_id]["product"] = updated_product
+                application.chat_data[chat_id]["state"] = State.REVIEW
+
+                markup = render(application.chat_data[chat_id]["state"], updated_product)
+                message = f"""Analysis complete — please review.
+
+Product Description: {updated_product.short_description}"""
+
+                await application.bot.send_message(chat_id=chat_id, text=message, reply_markup=markup)
+
+            except Exception as e:
+                logger.exception("Background analysis failed")
+                await application.bot.send_message(chat_id=chat_id, text=f"Analysis failed: {e}")
+
+        # schedule background task and return immediately
+        asyncio.create_task(_background_analyze(chat_id, application))
+        return
+
 
 async def on_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
@@ -200,6 +224,10 @@ async def on_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
             message = f"Product quantity set to {text}."
         else:
             message = "Quantity must be a digit. Try again."
+
+    if awaiting in ("serial_number", "short_description", "commodity", "destination"):
+        context.chat_data["product"].description_json[awaiting] = text
+        message = f"{awaiting.title()} set to {text}."
 
     # clear 'awaiting' state
     context.chat_data.pop("awaiting", None)

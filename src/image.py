@@ -30,17 +30,18 @@ async def image(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.photo:
         photo = update.message.photo[-1] # highest resolution available
         file = await context.bot.get_file(photo.file_id)
-        file_path = os.path.join(product["path"], f"{photo.file_id}.jpg")
+        file_path = os.path.join(product.tempdir, f"{photo.file_id}.jpg")
 
     if update.message.document:
         doc = update.message.document
         if doc.mime_type in IMAGE_MIME_TYPES:
             file = await context.bot.get_file(doc.file_id)
             ext = doc.file_name.split(".")[-1] if doc.file_name else "img"
-            file_path = os.path.join(product["path"], f"{doc.file_id}.{ext}")
+            file_path = os.path.join(product.tempdir, f"{doc.file_id}.{ext}")
 
     if file_path:
         await file.download_to_drive(file_path)
-        context.chat_data.get("product")["photos"].append(file_path)
-        markup = render(pickup=product["pickup"], product=product)
+        logger.info(f"Image stored: {file_path}")
+        product.photos.append(file_path)
+        markup = render(context.chat_data["state"], context.chat_data["product"])
         await update.message.reply_text("Image received and saved!", reply_markup=markup)

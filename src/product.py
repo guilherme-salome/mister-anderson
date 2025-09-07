@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 import time
 import datetime
 import os
@@ -22,6 +22,8 @@ class Product:
     photos: List[str] = field(default_factory=list)
     quantity: int = field(default_factory=lambda: 1)
     pickup: Optional[str] = None
+    description_raw: str = ""
+    description_json: Dict[str, Any] = field(default_factory=dict)
 
     @property
     def asset_tag(self) -> str:
@@ -29,6 +31,22 @@ class Product:
         digest = hashlib.sha1(to_hash.encode()).hexdigest()[:10]
         logger.info(f"Asset tag is {digest}")
         return digest
+
+    @property
+    def serial_number(self) -> str:
+        return self.description_json.get("serial_number", "")
+
+    @property
+    def short_description(self) -> str:
+        return self.description_json.get("short_description", "")
+
+    @property
+    def commodity(self) -> str:
+        return self.description_json.get("commodity", "")
+
+    @property
+    def destination(self) -> str:
+        return self.description_json.get("destination", "")
 
     def __post_init__(self):
         logger.info(f"New Instance of {repr(self)}")
