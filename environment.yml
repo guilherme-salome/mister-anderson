@@ -1,0 +1,13 @@
+name: mister-anderson
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - pytest
+  - python-telegram-bot
+  - pip
+  - isort
+  - setuptools
+  - openai
+  - nose
+prefix: /Users/gui/miniforge3/envs/mister-anderson
