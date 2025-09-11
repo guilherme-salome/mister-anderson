@@ -12,6 +12,7 @@ from telegram.ext import ContextTypes
 
 from .llm import process_product_folder
 from .product import Product
+from .storage import save_product_sqlite
 
 
 logger = logging.getLogger(__name__)
@@ -73,17 +74,11 @@ def render(state: str, product: Optional[Product] = None):
             [InlineKeyboardButton(f"🚚 Pickup: {product.pickup}", callback_data="act:set:pickup")],
             [InlineKeyboardButton(f"📝 Product Tag: {product.asset_tag}", callback_data="noop:set:tag")],
             [InlineKeyboardButton(f"📦 Quantity: {product.quantity}", callback_data="act:update:quantity")],
-            [InlineKeyboardButton(f"🔎 Serial Number: {product.serial_number}[:10]...", callback_data="act:update:serial_number")],
+            [InlineKeyboardButton(f"🔎 Serial Number: {product.serial_number[:10]}...", callback_data="act:update:serial_number")],
             [InlineKeyboardButton(f"🔎 Description: {product.short_description[:10]}...", callback_data="act:update:description")],
             [InlineKeyboardButton(f"🔎 Commodity: {product.commodity}", callback_data="act:update:commodity")],
             [InlineKeyboardButton(f"🔎 Destination: {product.destination}", callback_data="act:update:destination")],
             [InlineKeyboardButton("✅ Submit Product", callback_data="act:submit")],
-        ]
-
-    if state == State.DONE:
-        kb = [
-            [InlineKeyboardButton(f"🚚 Pickup: {product.pickup}", callback_data="act:set:pickup")],
-            [InlineKeyboardButton("📝 New Product", callback_data="act:set:product")],
         ]
 
     return InlineKeyboardMarkup(kb)
@@ -192,6 +187,21 @@ Product Description: {updated_product.short_description}"""
 
         # schedule background task and return immediately
         asyncio.create_task(_background_analyze(chat_id, application))
+        return
+
+    if action == "submit":
+        product = context.chat_data.get("product")
+        if not product:
+            await query.message.reply_text("No product to submit.")
+        try:
+            save_product_sqlite(product)
+            context.chat_data["state"] = State.READY
+            await query.message.reply_text("Product saved.",
+                reply_markup=render(context.chat_data["state"], product)
+            )
+        except Exception as e:
+            logger.exception("Submit failed")
+            await query.message.reply_text(f"Submit failed: {e}")
         return
 
 
