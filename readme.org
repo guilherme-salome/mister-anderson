@@ -1,4 +1,91 @@
-#+title: Readme
+#+title: Mr. Anderson — Warehouse Data Entry Assistant
+
+* Overview
+Mr. Anderson is a Telegram-based assistant that speeds up warehouse data entry. It lets a user snap product photos, uses OpenAI Vision to extract key fields (serial number, description, commodity, destination), and stores the results in SQLite with the images. A lightweight Flask web UI lists and previews saved products.
+
+Status: early development (alpha). I’m iterating with a warehouse user to make this truly useful in day-to-day work.
+
+Features:
+- Telegram chat flow with inline menu (pickup → photos → analysis → review → submit)
+- Vision model analysis of product photos via OpenAI
+- SQLite persistence with per-product image storage
+- Flask web UI to browse products and view images
+
+Directory layout:
+- run.py — convenience entrypoint that runs the Telegram bot
+- src/
+  - __init__.py — package marker
+  - bot.py — bot wiring (handlers, polling)
+  - menu.py — inline UI, state machine, callbacks
+  - image.py — image handling (Telegram photo/document download)
+  - text.py — placeholder for text commands (currently unused in routing)
+  - llm.py — OpenAI client, image upload, vision prompt, parsing
+  - product.py — Product dataclass and asset tag generation
+  - storage.py — SQLite schema, persistence, image copying
+  - webui.py — Flask app to list/view products and serve images
+  - config.py — reads tokens from ~/.authinfo
+
+Generated at runtime:
+- data/
+  - products.db — SQLite database
+  - products/<asset_tag>/ — persisted images (copied from temp)
+
+Key flow:
+1) /start → set pickup → start product
+2) Send photos (as photo or image document) → Analyze
+3) Review/edit extracted fields → Submit
+4) Browse at http://localhost:9090
+
+* Setup
+
+After cloning the repository and setting up Python with the listed packages in [[environment.yml]], you need to configure the credentials used to communicate with Telegram and OpenAI.
+
+Configure the following credentials in ~/.authinfo (Emacs authinfo format):
+#+begin_src conf
+# Telegram bot token from @BotFather
+machine api.telegram.com login telegram-bot password YOUR_TELEGRAM_BOT_TOKEN
+
+# OpenAI API key (note the specific login expected by the code)
+machine api.openai.com login mister-anderson-bot password YOUR_OPENAI_API_KEY
+#+end_src
+
+The project can be run with two terminals, one controlling the Telegram bot, and the other serving the web interface. Start the Telegram bot with:
+#+begin_src sh
+python -m src.bot
+#+end_src
+
+Start the web UI with:
+#+begin_src sh
+python -m src.webui
+# Opens on 0.0.0.0:9090 (http://localhost:9090)
+#+end_src
+
+* Usage - Telegram
+
+In Telegram:
+1. Start a chat with your bot and send /start.
+2. Set the pickup number.
+3. Tap “New Product” and send one or more product photos (either as photos or as image documents).
+4. Tap “Analyze Product” and wait for completion.
+5. Review the results; edit fields via the inline buttons if needed.
+6. Submit the product to save into SQLite and copy images into data/products/<asset_tag>/.
+
+Tips:
+- You can send multiple images; analysis runs in the background and notifies you when done.
+- Quantity and pickup expect digits; other fields are free text.
+- Asset tag is a short SHA1 based on the time the products was created and the user ID.
+
+* Usage - Web UI
+
+On a browser:
+1. Open http://localhost:9090 to see recent products (ID, asset tag, pickup, qty, serial, commodity, destination, description).
+2. Click an asset tag to view metadata, raw JSON, and images (thumbnails link to full-size served files).
 
 * Planning
-** TODO Structure data folder with date/pickup/product
+** TODO Auto-refresh of Web UI after product creation
+** TODO Testing with multiple concurrent users
+** TODO Secure telegram bot usage
+** TODO Editing of product in UI
+** TODO Authentication web UI
+** TODO Production server
+** TODO Export products to CSV
