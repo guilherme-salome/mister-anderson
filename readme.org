@@ -33,7 +33,7 @@ Key flow:
 1) /start → set pickup → start product
 2) Send photos (as photo or image document) → Analyze
 3) Review/edit extracted fields → Submit
-4) Browse at http://localhost:9090
+4) Browse at [[http://localhost:9090]]
 
 * Setup
 
@@ -77,14 +77,6 @@ Tips:
 * Usage - Web UI
 
 On a browser:
-1. Open http://localhost:9090 to see recent products (ID, asset tag, pickup, qty, serial, commodity, destination, description).
+1. Open [[http://localhost:9090]] to see recent products (ID, asset tag, pickup, qty, serial, commodity, destination, description).
 2. Click an asset tag to view metadata, raw JSON, and images (thumbnails link to full-size served files).
 
-* Planning :noexport:
-** TODO Auto-refresh of Web UI after product creation
-** TODO Testing with multiple concurrent users
-** TODO Secure telegram bot usage
-** TODO Editing of product in UI
-** TODO Authentication web UI
-** TODO Production server
-** TODO Export products to CSV
