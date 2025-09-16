@@ -80,3 +80,96 @@ On a browser:
 1. Open [[http://localhost:9090]] to see recent products (ID, asset tag, pickup, qty, serial, commodity, destination, description).
 2. Click an asset tag to view metadata, raw JSON, and images (thumbnails link to full-size served files).
 
+* Explaining the Code
+** [[file:src/webui.py::def events][Streaming Update Events]]
+
+Here’s the mental model: the web UI keeps a single long-lived HTTP connection open to your server. Whenever the [[file:src/webui.py::def _watch_db][DB watcher]] thread notices new products, it “publishes” a message into per-client queues. Each client’s =/events= HTTP response streams those messages out as Server-Sent Events (SSE). The browser’s EventSource API receives them and refreshes the table.
+
+Big picture flow
+- Browser: opens =EventSource("/events")= and listens for "products" events.
+- Server:
+  - [[file:src/webui.py::def _watch_db][_watch_db]] runs in a background thread, polls SQLite, and when it sees new rows it calls =notifier.publish(payload)=.
+  - Each connected client has its own queue; the =/events= route reads from that queue and yields SSE frames down the open HTTP response.
+  - Keep-alive comments are sent periodically so proxies don’t close the idle connection.
+- Browser: on "products", it fetches =/table-rows= and replaces the table body; the detail page optionally reloads if the current asset tag was updated.
+
+The [[file:src/webui.py::class Notifier][Notifier]] (fan-out to many clients)
+- subs: a set of Queue objects, one per currently connected client.
+- subscribe(): creates a new queue.Queue(), adds it to subs under a lock, returns it. Each client request gets its own queue.
+- unsubscribe(q): removes the queue when the client disconnects (avoids leaks).
+- publish(payload): iterates all subscriber queues and q.put_nowait(payload). With default Queue(maxsize=0), this won’t block and won’t raise queue.Full, but the try/except is harmless and future-proof. Queues are thread-safe, so this safely hands messages from the DB watcher thread to request handler threads.
+
+The DB watcher (_watch_db)
+- _db_stats_since(last_id) gets new rows since last_seen and the current max id and count.
+- Loop every interval (1s):
+  - If there are new rows, build payload = {"new": [asset_tags], "count": count, "max_id": max_id} and call notifier.publish(payload).
+  - Every 15s publish({"ping": True}) as a keep-alive signal.
+- Broad try/except prevents the thread from dying on transient errors.
+
+Server-Sent Events (SSE) basics you need
+- It’s plain HTTP with a text/event-stream response that stays open.
+- The server sends events as text lines terminated by a blank line. Common fields:
+  - event: name sets the event type.
+  - data: payload can be any text; JSON is common.
+  - Lines starting with ":" are comments; browsers ignore them. They’re perfect as keep-alives.
+- EventSource in the browser auto-reconnects if the connection drops.
+
+Now, line-by-line: the events() route
+
+@app.route("/events")
+def events():
+- q = notifier.subscribe()
+  - Allocate a per-client queue and register it. This is this client’s inbox.
+
+- def stream():
+  - Define a generator that will yield bytes over time; Flask streams its output to the client without closing the response.
+
+  - try:
+      while True:
+        try:
+          data = q.get(timeout=20)
+          if "ping" in data:
+            yield ": keep-alive\n\n"
+          else:
+            yield f"event: products\ndata: {json.dumps(data)}\n\n"
+        except queue.Empty:
+          yield ": keep-alive\n\n"
+    finally:
+      notifier.unsubscribe(q)
+
+  What each part does:
+  - q.get(timeout=20): block up to 20s waiting for a message from the Notifier.
+    - If a message arrives:
+      - If it contains "ping", we send a comment line ": keep-alive\n\n". This is an SSE no-op that keeps the TCP/HTTP connection alive through proxies.
+      - Otherwise we send an actual event:
+        - event: products sets the event type.
+        - data: <json> carries the payload (the new asset tags, counts, etc.).
+        - A blank line terminates the SSE message.
+    - If no message arrives in 20s (queue.Empty), we still send a keep-alive comment. This protects against idle timeouts even if the DB watcher didn’t ping.
+  - finally: notifier.unsubscribe(q) ensures we remove this client’s queue when the connection ends (generator exits due to client disconnect or server shutdown), avoiding memory leaks.
+
+- return Response(stream(), mimetype="text/event-stream")
+  - Tells the browser this is an SSE stream. Flask will flush chunks as the generator yields. The connection stays open until the client disconnects or the server stops.
+
+What the browser does with it (from LIST_TMPL/DETAIL_TMPL)
+- const es = new EventSource("/events"): opens the long-lived connection.
+- es.addEventListener("products", handler): receives only the named events you emit with event: products.
+- For the list page, on event it fetches updated HTML from /table-rows and swaps the tbody. For the detail page, it parses evt.data JSON and reloads if its asset tag appears in payload.new.
+- Keep-alive comments you send are ignored by EventSource but keep the pipe open.
+
+Networking/streaming nuances that matter
+- Long-lived HTTP response: Flask streams the generator output; each yield sends a chunk to the client (via chunked transfer encoding). threaded=True in app.run allows this streaming request to coexist with other requests (like /table-rows).
+- Proxies and timeouts: Many proxies close idle connections. Sending comment lines periodically keeps them warm.
+- Backpressure: Using per-client queues decouples producers from consumers. If a client is slow, its handler thread will block on q.get or while writing to the socket, but producers (DB watcher) won’t block because they just enqueue and move on. With default Queue (unbounded), you won’t see queue.Full; if you ever set a maxsize, put_nowait guards avoid blocking the publisher thread.
+- Cleanup: finally: unsubscribe ensures queues are removed when clients go away; otherwise memory would grow with stale subscribers.
+- Reliability: EventSource auto-reconnects. If the stream drops, the browser reopens /events. The server recreates a new queue via subscribe().
+
+End-to-end: what happens when a product is saved
+- save_product_sqlite writes into SQLite.
+- Within ~1s, _watch_db sees a new row, builds payload with its asset_tag, and notifier.publish(payload).
+- Each connected /events stream gets that payload from its queue and yields:
+  event: products
+  data: {"new":["abc123..."],"count":..., "max_id":...}
+
+- The list page fetches new rows HTML; the detail page reloads if the current tag is in payload.new.
+
