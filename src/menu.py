@@ -24,7 +24,7 @@ class State(str, Enum):
     PRODUCT = "PRODUCT"          # gathering photos etc.
     ANALYZING = "ANALYZING"      # parsing photos and other information
     REVIEW = "REVIEW"            # user reviews and updates what is necessary
-    DONE = "DONE"                # after confirmation
+    # DONE = "DONE"                # after confirmation
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -40,6 +40,23 @@ Please choose:
     context.chat_data["product"] = Product(created_by = update.effective_user.id)
     markup = render(context.chat_data["state"], context.chat_data["product"])
     await update.message.reply_text(message, reply_markup=markup)
+
+
+async def _test_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Create a fake product for testing the UI and db
+    test_product = Product(created_by = update.effective_user.id)
+    test_product.pickup = "3005"
+    test_product.quantity = "24"
+    test_product.description_json["serial_number"] = "abc"
+    test_product.description_json["short_description"] = "def"
+    test_product.description_json["commodity"] = "iphone"
+    test_product.description_json["destination"] = "recycled"
+    context.chat_data["product"] = test_product
+    # Submit product
+    save_product_sqlite(context.chat_data["product"])
+    context.chat_data["state"] = State.READY
+    # Update chat
+    await update.message.reply_text("Product saved.", reply_markup=render(context.chat_data["state"], context.chat_data["product"]))
 
 
 def render(state: str, product: Optional[Product] = None):

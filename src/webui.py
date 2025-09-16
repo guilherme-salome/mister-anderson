@@ -1,8 +1,22 @@
 #!/usr/bin/env python3
 
+import logging
 import os
-from flask import Flask, g, render_template_string, send_from_directory, abort, url_for
-from .storage import PRODUCTS_DIR, init_db, list_products, get_product
+import time
+import json
+import threading
+import queue
+import sqlite3
+
+from flask import Flask, g, render_template_string, send_from_directory, abort, url_for, Response
+from .storage import PRODUCTS_DIR, DB_PATH, init_db, list_products, get_product
+
+logger = logging.getLogger(__name__)
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+
 
 app = Flask(__name__)
 
@@ -29,7 +43,7 @@ LIST_TMPL = """
         <th>Serial</th><th>Commodity</th><th>Destination</th><th>Short Description</th>
       </tr>
     </thead>
-    <tbody>
+    <tbody id="rows">
     {% for p in products %}
       <tr>
         <td>{{ p["id"] }}</td>
@@ -44,6 +58,23 @@ LIST_TMPL = """
     {% endfor %}
     </tbody>
   </table>
+
+  <script>
+    // Auto-refresh table rows when products change
+    const es = new EventSource("/events");
+    es.addEventListener("products", async (evt) => {
+      try {
+        const res = await fetch("/table-rows");
+        const html = await res.text();
+        const tbody = document.getElementById("rows");
+        tbody.innerHTML = html;
+      } catch (e) {
+        console.error("Failed to refresh rows:", e);
+      }
+    });
+    // Optional: log keep-alives
+    es.onerror = (e) => console.error("SSE error", e);
+  </script>
 </body>
 </html>
 """
@@ -85,14 +116,135 @@ DETAIL_TMPL = """
       </a>
     {% endfor %}
   </div>
+
+  <script>
+    // Optional: if this product gets updated (same asset tag), reload page
+    const currentTag = "{{ p['asset_tag'] }}";
+    const es = new EventSource("/events");
+    es.addEventListener("products", (evt) => {
+      try {
+        const payload = JSON.parse(evt.data || "{}");
+        const updated = payload.new || [];
+        if (updated.includes(currentTag)) {
+          location.reload();
+        }
+      } catch(e) {}
+    });
+  </script>
 </body>
 </html>
 """
+
+ROWS_TMPL = """
+{% for p in products %}
+  <tr>
+    <td>{{ p["id"] }}</td>
+    <td><a href="{{ url_for('product_detail', asset_tag=p['asset_tag']) }}">{{ p["asset_tag"] }}</a></td>
+    <td>{{ p["pickup"] or "" }}</td>
+    <td>{{ p["quantity"] }}</td>
+    <td>{{ p["serial_number"] or "" }}</td>
+    <td>{{ p["commodity"] or "" }}</td>
+    <td>{{ p["destination"] or "" }}</td>
+    <td>{{ p["short_description"] or "" }}</td>
+  </tr>
+{% endfor %}
+"""
+class Notifier:
+    def __init__(self):
+        self.subs = set()
+        self.lock = threading.Lock()
+
+    def subscribe(self):
+        q = queue.Queue()
+        with self.lock:
+            self.subs.add(q)
+        return q
+
+    def unsubscribe(self, q):
+        with self.lock:
+            self.subs.discard(q)
+
+    def publish(self, payload: dict):
+        with self.lock:
+            for q in list(self.subs):
+                try:
+                    q.put_nowait(payload)
+                except queue.Full:
+                    pass
+
+notifier = Notifier()
+
+def _db_stats_since(last_id: int):
+    logger.info("Querying DB for Updates...")
+    con = sqlite3.connect(DB_PATH)
+    try:
+        cur = con.cursor()
+        # New rows since last_id
+        cur.execute("SELECT id, asset_tag FROM products WHERE id > ? ORDER BY id ASC", (last_id,))
+        new_rows = cur.fetchall()
+        # Total count (optional, useful if you want to display counts)
+        cur.execute("SELECT COUNT(1), COALESCE(MAX(id), 0) FROM products")
+        count, max_id = cur.fetchone()
+        return new_rows, count or 0, max_id or 0
+    finally:
+        con.close()
+
+def _watch_db(interval=1.0):
+    # Initialize last_seen from DB
+    _, _, last_seen = _db_stats_since(0)
+    last_keepalive = time.time()
+    while True:
+        time.sleep(interval)
+        try:
+            new_rows, count, max_id = _db_stats_since(last_seen)
+            if new_rows:
+                logger.info(f"{len(new_rows)} new rows found in DB.")
+                last_seen = max_id
+                payload = {
+                    "new": [r[1] for r in new_rows],  # asset_tags
+                    "count": count,
+                    "max_id": max_id,
+                }
+                logger.info(f"Payload: {repr(payload)}")
+                notifier.publish(payload)
+            # Keep-alive every 15s to prevent idle proxies from closing
+            if time.time() - last_keepalive > 15:
+                logger.info("Pinging.")
+                notifier.publish({"ping": True})
+                last_keepalive = time.time()
+        except Exception:
+            # Fail-safe: don't kill the thread on transient errors
+            pass
 
 @app.route("/")
 def index():
     products = list_products(limit=500)
     return render_template_string(LIST_TMPL, products=products)
+
+@app.route("/events")
+def events():
+    q = notifier.subscribe()
+    def stream():
+        try:
+            while True:
+                try:
+                    data = q.get(timeout=20)
+                    if "ping" in data:
+                        # SSE comment as keep-alive
+                        yield ": keep-alive\n\n"
+                    else:
+                        yield f"event: products\ndata: {json.dumps(data)}\n\n"
+                except queue.Empty:
+                    # periodic keep-alive
+                    yield ": keep-alive\n\n"
+        finally:
+            notifier.unsubscribe(q)
+    return Response(stream(), mimetype="text/event-stream")
+
+@app.route("/table-rows")
+def table_rows():
+    products = list_products(limit=500)
+    return render_template_string(ROWS_TMPL, products=products)
 
 @app.route("/product/<asset_tag>")
 def product_detail(asset_tag):
@@ -110,8 +262,11 @@ def serve_file(asset_tag, filename):
     return send_from_directory(safe_dir, filename)
 
 def main():
-    init_db() # creates products table if it doesn't already exist
-    app.run(host="0.0.0.0", port=9090, debug=False)
+    init_db()
+    # Start background DB watcher
+    threading.Thread(target=_watch_db, daemon=True).start()
+    # threaded=True so SSE can stream while other requests are served
+    app.run(host="0.0.0.0", port=9090, debug=False, threaded=True)
 
 if __name__ == "__main__":
     main()
