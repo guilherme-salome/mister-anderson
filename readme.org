@@ -59,6 +59,8 @@ python -m src.webui
 # Opens on 0.0.0.0:9090 (http://localhost:9090)
 #+end_src
 
+Add a whitelist file at =config/whitelist.txt= (one numeric Telegram user ID per line). The app reads =PROJECT/config/whitelist.txt= (=falls back to config/whitelist.example.txt=) and extracts numbers with a simple regex, so use one ID per line (comments OK). See the example file. To find your Telegram numeric ID use a helper bot like @userinfobot or check the bot logs (=update.effective_user.id= is logged/used). After editing or creating the whitelist file, restart the bot (e.g. python -m src.bot) because ALLOWED_USERS is loaded at import time.
+
 * Usage - Telegram
 
 In Telegram:
