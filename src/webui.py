@@ -7,9 +7,14 @@ import json
 import threading
 import queue
 import sqlite3
+import functools
 
-from flask import Flask, g, render_template_string, send_from_directory, abort, url_for, Response
+from flask import Flask, g, render_template_string, send_from_directory, abort, url_for, Response, request, redirect, session
+
+from .config import read_basic_users, read_token
 from .storage import PRODUCTS_DIR, DB_PATH, init_db, list_products, get_product
+
+
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(
@@ -17,8 +22,36 @@ logging.basicConfig(
     level=logging.INFO
 )
 
-
 app = Flask(__name__)
+
+try:
+    app.secret_key = os.environ.get("WEBUI_SECRET") or read_token('mister-anderson-webui', 'secret')
+except Exception:
+    app.secret_key = os.urandom(32).hex()  # fallback (ephemeral)
+
+WEB_USERS = read_basic_users()
+
+
+def login_required(fn):
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        if not session.get("user"):
+            return redirect(url_for("login", next=request.url))
+        return fn(*args, **kwargs)
+    return wrapper
+
+
+LOGIN_TMPL = """
+<!doctype html><meta charset="utf-8"><title>Login</title>
+<style>body{font-family:sans-serif;margin:2rem;max-width:420px}</style>
+<h1>Login</h1>
+{% if error %}<p style="color:#b00">{{error}}</p>{% endif %}
+<form method="post">
+  <label>User<br><input name="username" required></label><br><br>
+  <label>Password<br><input name="password" type="password" required></label><br><br>
+  <button type="submit">Sign in</button>
+</form>
+"""
 
 LIST_TMPL = """
 <!doctype html>
@@ -35,7 +68,13 @@ LIST_TMPL = """
   </style>
 </head>
 <body>
-  <h1>Products</h1>
+  <div style="display:flex;justify-content:space-between;align-items:center;">
+    <h1>Products</h1>
+    <div>
+      <span>{{ session.get('user') }}</span>
+      <a href="{{ url_for('logout') }}" style="margin-left:12px;">Logout</a>
+    </div>
+  </div>
   <table>
     <thead>
       <tr>
@@ -94,7 +133,13 @@ DETAIL_TMPL = """
   </style>
 </head>
 <body>
-  <p><a href="{{ url_for('index') }}">&larr; Back</a></p>
+  <div style="display:flex;justify-content:space-between;align-items:center;">
+    <p><a href="{{ url_for('index') }}">&larr; Back</a></p>
+    <div>
+      <span>{{ session.get('user') }}</span>
+      <a href="{{ url_for('logout') }}" style="margin-left:12px;">Logout</a>
+    </div>
+  </div>
   <h1>Product {{ p["asset_tag"] }}</h1>
   <div class="meta">
     <div><strong>Pickup:</strong> {{ p["pickup"] or "" }}</div>
@@ -216,12 +261,30 @@ def _watch_db(interval=1.0):
             # Fail-safe: don't kill the thread on transient errors
             pass
 
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if request.method == "POST":
+        u = request.form.get("username","")
+        p = request.form.get("password","")
+        if WEB_USERS.get(u) == p:
+            session["user"] = u
+            return redirect(request.args.get("next") or url_for("index"))
+        return render_template_string(LOGIN_TMPL, error="Invalid credentials.")
+    return render_template_string(LOGIN_TMPL, error=None)
+
+@app.route("/logout")
+def logout():
+    session.clear()
+    return redirect(url_for("login"))
+
 @app.route("/")
+@login_required
 def index():
     products = list_products(limit=500)
     return render_template_string(LIST_TMPL, products=products)
 
 @app.route("/events")
+@login_required
 def events():
     q = notifier.subscribe()
     def stream():
@@ -242,11 +305,13 @@ def events():
     return Response(stream(), mimetype="text/event-stream")
 
 @app.route("/table-rows")
+@login_required
 def table_rows():
     products = list_products(limit=500)
     return render_template_string(ROWS_TMPL, products=products)
 
 @app.route("/product/<asset_tag>")
+@login_required
 def product_detail(asset_tag):
     p = get_product(asset_tag)
     if not p:
@@ -255,6 +320,7 @@ def product_detail(asset_tag):
     return render_template_string(DETAIL_TMPL, p=p, photos=photos)
 
 @app.route("/files/<asset_tag>/<filename>")
+@login_required
 def serve_file(asset_tag, filename):
     safe_dir = os.path.abspath(os.path.join(PRODUCTS_DIR, asset_tag))
     if not safe_dir.startswith(os.path.abspath(PRODUCTS_DIR)):

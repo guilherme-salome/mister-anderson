@@ -46,6 +46,21 @@ def read_whitelist(path=None):
 
 ALLOWED_USERS = read_whitelist()
 
+
+def read_basic_users(machine='mister-anderson-webui'):
+    users = {}
+    if not os.path.isfile(authinfo):
+        return users
+    with open(authinfo) as f:
+        for line in f:
+            if f"machine {machine}" in line:
+                m_login = re.search(r'login\s+(\S+)', line)
+                m_pass = re.search(r'password\s+(\S+)', line)
+                if m_login and m_pass:
+                    users[m_login.group(1)] = m_pass.group(1)
+    return users
+
+
 if __name__ == "__main__":
     if read_token('api.telegram.com'):
         print(f"Found Telegram Token in {authinfo}")
