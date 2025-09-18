@@ -209,3 +209,4 @@ __marimo__/
 # Folders that store temporary data
 products/
 data/
+config/whitelist.txt

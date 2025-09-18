@@ -1,0 +1,2 @@
+# Telegram user IDs allowed to use the bot (one per line)
+# 7127999319

@@ -9,7 +9,7 @@ from enum import Enum
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ForceReply
 from telegram.ext import ContextTypes
 
-
+from .config import ALLOWED_USERS
 from .llm import process_product_folder
 from .product import Product
 from .storage import save_product_sqlite
@@ -113,6 +113,11 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     arg = parts[2] if len(parts) > 2 else None
 
     logger.info(f"Callback: {action} {arg}")
+
+    if update.effective_user.id not in ALLOWED_USERS:
+        logger.info(f"Denied User ID: {update.effective_user.id}")
+        await query.answer("Access denied.", show_alert=True)
+        return
 
     if action == "noop":
         return
