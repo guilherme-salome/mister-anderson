@@ -34,8 +34,8 @@ def accdb(path: str, version: str = "V2010"):
         logger.info(f"Creating Access database at {path}")
         cur = conn.cursor()
         # Create a couple of sample tables
-        drop_object_if_exists(cur, "People")
-        drop_object_if_exists(cur, "Orders")
+        # drop_object_if_exists(cur, "People")
+        # drop_object_if_exists(cur, "Orders")
         conn.commit()
         cur.execute("""
             CREATE TABLE People (
@@ -49,10 +49,10 @@ def accdb(path: str, version: str = "V2010"):
                 ID AUTOINCREMENT PRIMARY KEY,
                 PersonID INTEGER,
                 Amount DOUBLE,
-                OrderDate DATETIME
+                OrderDate DATETIME,
+                CONSTRAINT FK_Orders_People FOREIGN KEY (PersonID) REFERENCES People(ID)
             )
         """)
-        # Seed data
         cur.executemany(
             "INSERT INTO People (Name, Email) VALUES (?, ?)",
             [
@@ -116,5 +116,6 @@ def sqlite(path: str):
 
 
 if __name__ == "__main__":
+    # Test database connections
     accdb(os.path.join("data", "sample.accdb"))
     sqlite(os.path.join("data", "sample.sqlite"))
