@@ -50,7 +50,55 @@ def describe_access(connection, table):
         for r in rows
     ]
     pk_cols = [r[1] for r in sorted((rr for rr in rows if rr[6]), key=lambda rr: (rr[5] or 0))]
-    return cols, pk_cols
+    cur.execute("""
+      SELECT
+        rc.CONSTRAINT_NAME,
+        fk_cols.COLUMN_NAME      AS FK_COLUMN,
+        fk_cols.ORDINAL_POSITION AS FK_ORD,
+        tgt_tc.TABLE_NAME        AS PK_TABLE,
+        pk_cols.COLUMN_NAME      AS PK_COLUMN,
+        rc.UPDATE_RULE,
+        rc.DELETE_RULE
+      FROM INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS rc
+      JOIN INFORMATION_SCHEMA.TABLE_CONSTRAINTS fk_tc
+        ON fk_tc.CONSTRAINT_NAME = rc.CONSTRAINT_NAME
+       AND fk_tc.TABLE_SCHEMA    = rc.CONSTRAINT_SCHEMA
+      JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE fk_cols
+        ON fk_cols.CONSTRAINT_NAME = fk_tc.CONSTRAINT_NAME
+       AND fk_cols.TABLE_SCHEMA    = fk_tc.TABLE_SCHEMA
+      JOIN INFORMATION_SCHEMA.TABLE_CONSTRAINTS tgt_tc
+        ON tgt_tc.CONSTRAINT_NAME = rc.UNIQUE_CONSTRAINT_NAME
+       AND tgt_tc.TABLE_SCHEMA    = rc.UNIQUE_CONSTRAINT_SCHEMA
+      JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE pk_cols
+        ON pk_cols.CONSTRAINT_NAME = tgt_tc.CONSTRAINT_NAME
+       AND pk_cols.TABLE_SCHEMA    = tgt_tc.TABLE_SCHEMA
+       AND pk_cols.ORDINAL_POSITION = fk_cols.ORDINAL_POSITION
+      WHERE fk_tc.TABLE_SCHEMA = 'PUBLIC'
+        AND fk_tc.TABLE_NAME   = UPPER(?)
+      ORDER BY rc.CONSTRAINT_NAME, fk_cols.ORDINAL_POSITION
+    """, [table])
+    fk_rows = cur.fetchall()
+    fks = {}
+    for name, fk_col, ord_pos, pk_table, pk_col, on_upd, on_del in fk_rows:
+        d = fks.setdefault(name, {
+            "name": name,
+            "columns": [],
+            "ref_table": pk_table,
+            "ref_columns": [],
+            "update_rule": on_upd,
+            "delete_rule": on_del,
+        })
+        d["columns"].append((ord_pos, fk_col))
+        d["ref_columns"].append((ord_pos, pk_col))
+    fks = [
+        {
+            **d,
+            "columns": [c for _, c in sorted(d["columns"])],
+            "ref_columns": [c for _, c in sorted(d["ref_columns"])],
+        }
+        for d in fks.values()
+    ]
+    return cols, pk_cols, fks
 
 
 def describe_sqlite(connection, table):
@@ -84,7 +132,31 @@ def describe_sqlite(connection, table):
         for r in rows
     ]
     pk_cols = [r["name"] for r in sorted(rows, key=lambda r: r["pk"]) if r["pk"]]
-    return cols, pk_cols
+    qtable = '"' + table_name.replace('"','""') + '"'
+    cur.execute(f"PRAGMA foreign_key_list({qtable});")
+    fk_rows = cur.fetchall()
+    fks_by_id = {}
+    for r in fk_rows:
+        d = fks_by_id.setdefault(r["id"], {
+            "name": None,  # SQLite doesn't store FK names
+            "columns": [],
+            "ref_table": r["table"],
+            "ref_columns": [],
+            "update_rule": r["on_update"],
+            "delete_rule": r["on_delete"],
+            "match": r["match"],
+        })
+        d["columns"].append((r["seq"], r["from"]))
+        d["ref_columns"].append((r["seq"], r["to"]))
+    fks = [
+        {
+            **d,
+            "columns": [c for _, c in sorted(d["columns"])],
+            "ref_columns": [c for _, c in sorted(d["ref_columns"])],
+        }
+        for d in fks_by_id.values()
+    ]
+    return cols, pk_cols, fks
 
 
 if __name__ == "__main__":
