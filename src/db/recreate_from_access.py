@@ -4,36 +4,10 @@ from typing import List, Dict, Tuple
 
 from .connect_access import connection as access_connection
 from .connect_sqlite import connection as sqlite_connection
-from .describe import describe_access  # returns (cols, pk_cols, fks)
+from .utils import list_tables, describe_table, access_to_sqlite_type, qident, table_exists, same_columns
 
 logger = logging.getLogger(__name__)
 
-def list_access_user_tables(acc_conn) -> List[str]:
-    cur = acc_conn.cursor()
-    cur.execute("""
-        SELECT TABLE_NAME
-        FROM INFORMATION_SCHEMA.TABLES
-        WHERE TABLE_SCHEMA='PUBLIC' AND TABLE_TYPE='BASE TABLE'
-        ORDER BY TABLE_NAME
-    """)
-    return [r[0] for r in cur.fetchall()]
-
-def access_to_sqlite_type(type_name: str) -> str:
-    t = (type_name or "").upper()
-    if t in ("COUNTER", "AUTOINCREMENT", "IDENTITY", "LONG", "INTEGER", "INT", "SMALLINT"):
-        return "INTEGER"
-    if t in ("DOUBLE", "FLOAT", "REAL", "SINGLE", "NUMERIC", "DECIMAL", "MONEY", "CURRENCY"):
-        return "REAL"
-    if t in ("DATETIME", "DATE", "TIME", "TIMESTAMP"):
-        return "TEXT"  # store ISO8601
-    if t in ("YESNO", "BOOLEAN", "BIT"):
-        return "INTEGER"  # 0/1
-    if t in ("BINARY", "VARBINARY", "IMAGE", "OLEOBJECT"):
-        return "BLOB"
-    return "TEXT"
-
-def qident(name: str) -> str:
-    return '"' + name.replace('"', '""') + '"'
 
 def build_sqlite_create(table: str,
                         acc_cols: List[Dict],
@@ -67,13 +41,12 @@ def build_sqlite_create(table: str,
         defs.append(f"FOREIGN KEY ({cols}) REFERENCES {qident(fk['ref_table'])} ({ref_cols}){upd}{dele}")
     return f"CREATE TABLE {qident(table)} (\n  " + ",\n  ".join(defs) + "\n)"
 
-def sqlite_table_exists(sql_conn, table: str) -> bool:
-    cur = sql_conn.cursor()
-    cur.execute("SELECT 1 FROM sqlite_schema WHERE type IN ('table','view') AND name = ?", [table])
-    return cur.fetchone() is not None
-
-def recreate_single_table(acc_conn, sql_conn, table: str, overwrite: bool = False, preview: bool = True):
-    cols, pk_cols, fks = describe_access(acc_conn, table)
+def create_single_table(accdb_path: str,
+                        sqlite_path: str,
+                        table: str,
+                        overwrite: bool = False,
+                        preview: bool = True):
+    cols, pk_cols, fks = describe_table(accdb_path, table)
     if not cols:
         logger.warning(f"{table}: no columns found; skipping")
         return
@@ -81,43 +54,54 @@ def recreate_single_table(acc_conn, sql_conn, table: str, overwrite: bool = Fals
     if preview:
         print(f"\n-- {table}")
         print(ddl)
+    with sqlite_connection(sqlite_path) as con:
+        cur = con.cursor()
+        if table_exists(sqlite_path, table):
+            if not overwrite:
+                print(f"SQLite table {table} already exists. Skipping (use overwrite=True to drop).")
+                return
+            cur.execute(f"DROP TABLE IF EXISTS {qident(table)}")
+            con.commit()
+        cur.execute(ddl)
+        con.commit()
+        print(f"Created SQLite table {table}")
+    assert same_columns(accdb_path, sqlite_path, table), "Columns do not match"
 
-    cur = sql_conn.cursor()
-    if sqlite_table_exists(sql_conn, table):
-        if not overwrite:
-            print(f"SQLite table {table} already exists. Skipping (use overwrite=True to drop).")
-            return
-        cur.execute(f"DROP TABLE IF EXISTS {qident(table)}")
-        sql_conn.commit()
-    cur.execute(ddl)
-    sql_conn.commit()
-    print(f"Created SQLite table {table}")
+def sync_access_to_sqlite(accdb_path: str,
+                          sqlite_path: str,
+                          table: str,
+                          chunk_size: int = 1000):
+    cols, pk_cols, _ = describe_table(accdb_path, table, verbose=False)
+    if not pk_cols:
+        raise ValueError(f"{table}: cannot sync without a primary key")
+    col_names = [c["name"] for c in cols]
+    placeholders = ", ".join(["?"] * len(col_names))
+    quoted_cols = ", ".join(qident(c, "access") for c in col_names)
+    # UPSERT clause (update all non-PK columns)
+    upsert_clause = ", ".join(
+        f"{qident(c, 'access')} = excluded.{qident(c, 'access')}"
+        for c in col_names if c not in pk_cols
+    )
+    conflict_cols = ", ".join(qident(c, 'access') for c in pk_cols)
+    sql = f"""
+        INSERT INTO {qident(table)} ({quoted_cols})
+        VALUES ({placeholders})
+        ON CONFLICT({conflict_cols}) DO UPDATE SET
+          {upsert_clause}
+    """
+    with access_connection(accdb_path) as acc_con, sqlite_connection(sqlite_path) as sqlite_con:
+        acc_cur = acc_con.cursor()
+        sqlite_cur = sqlite_con.cursor()
+        acc_cur.execute(f"SELECT {quoted_cols} FROM {qident(table, 'access')}")
+        while True:
+            rows = acc_cur.fetchmany(chunk_size)
+            if not rows:
+                break
+            sqlite_cur.executemany(sql, rows)
+        sqlite_con.commit()
+    print(f"Synchronized table {table}")
 
-def interactive_recreate(accdb_path: str, sqlite_path: str):
-    with access_connection(accdb_path) as acc, sqlite_connection(sqlite_path) as sq:
-        tables = list_access_user_tables(acc)
-        if not tables:
-            print("No user tables found.")
-            return
-        print("User tables in Access:")
-        for i, t in enumerate(tables, 1):
-            print(f"{i:2d}. {t}")
 
-        all_yes = False
-        overwrite = None
-        for t in tables:
-            if not all_yes:
-                ans = input(f"Recreate {t} in SQLite? [y/N/a=all/q] ").strip().lower()
-                if ans == "q":
-                    break
-                if ans == "a":
-                    all_yes = True
-                elif ans not in ("y", "yes"):
-                    continue
-            if overwrite is None and sqlite_table_exists(sq, t):
-                o = input(f"SQLite table {t} exists. Drop and recreate? [y/N] ").strip().lower()
-                overwrite = o in ("y", "yes")
-            recreate_single_table(acc, sq, t, overwrite=bool(overwrite), preview=True)
 
 if __name__ == "__main__":
     import sys
