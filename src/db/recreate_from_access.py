@@ -93,18 +93,34 @@ def sync_access_to_sqlite(accdb_path: str,
         acc_cur = acc_con.cursor()
         sqlite_cur = sqlite_con.cursor()
         acc_cur.execute(f"SELECT {quoted_cols} FROM {qident(table, 'access')}")
-        while True:
-            rows = acc_cur.fetchmany(chunk_size)
-            if not rows:
-                break
+        while (rows := acc_cur.fetchmany(chunk_size)):
             sqlite_cur.executemany(sql, rows)
         sqlite_con.commit()
     print(f"Synchronized table {table}")
 
+def sync_sqlite_to_access(sqlite_path: str,
+                          accdb_path: str,
+                          table: str,
+                          chunk_size: int = 1000):
+    cols, pk_cols, _ = describe_table(accdb_path, table, verbose=False)
+    if not pk_cols:
+        raise ValueError(f"{table}: cannot sync without a primary key")
 
+    col_names = [c["name"] for c in cols]
+    quoted_cols = ", ".join(qident(c, "access") for c in col_names)
+    placeholders = ", ".join(["?"] * len(col_names))
+    set_clause = ", ".join(f"{qident(c, 'access')} = ?" for c in col_names if c not in pk_cols)
+    where_clause = " AND ".join(f"{qident(c, 'access')} = ?" for c in pk_cols)
 
-if __name__ == "__main__":
-    import sys
-    if len(sys.argv) != 3:
-        raise SystemExit("Usage: python -m db.recreate_from_access path/to/assets.accdb path/to/assets.sqlite")
-    interactive_recreate(sys.argv[1], sys.argv[2])
+    with sqlite_connection(sqlite_path) as s_con, access_connection(accdb_path) as a_con:
+        s_cur, a_cur = s_con.cursor(), a_con.cursor()
+        s_cur.execute(f"SELECT {', '.join(qident(c, 'sqlite') for c in col_names)} FROM {qident(table, 'sqlite')}")
+        while (rows := s_cur.fetchmany(chunk_size)):
+            for r in rows:
+                nonpk = [r[col_names.index(c)] for c in col_names if c not in pk_cols]
+                pk = [r[col_names.index(c)] for c in pk_cols]
+                a_cur.execute(f"UPDATE {qident(table, 'access')} SET {set_clause} WHERE {where_clause}", nonpk + pk)
+                if not a_cur.rowcount:
+                    a_cur.execute(f"INSERT INTO {qident(table, 'access')} ({quoted_cols}) VALUES ({placeholders})", r)
+        a_con.commit()
+    print(f"Synchronized table {table} (SQLite → Access)")
