@@ -22,6 +22,7 @@ def list_tables(db_path: str):
             rows = cur.fetchall()
     elif db_path.endswith("sqlite"):
         with sqlite_connection(db_path) as con:
+            cur = con.cursor()
             cur.execute("""
                 SELECT name
                 FROM sqlite_schema
@@ -157,7 +158,7 @@ def print_table(db_path: str, table: str, subsample: int = 100):
         headers = [desc[0] for desc in cur.description]
 
     if not rows:
-        print(f"Table '{table}' is empty.")
+        logger.warn(f"Table '{table}' is empty.")
         return
 
     df = pd.DataFrame(rows, columns=headers)
@@ -165,5 +166,6 @@ def print_table(db_path: str, table: str, subsample: int = 100):
     pd.set_option("display.width", 180)
     pd.set_option("display.max_rows", 20)
 
-    print(f"\n-- Showing up to {subsample} rows from '{table}' ({len(rows)} retrieved) --\n")
-    print(df.to_string(index=False))
+    _msg = f"\n-- Showing up to {subsample} rows from '{table}' ({len(rows)} retrieved) --\n" \
+        + df.to_string(index=False)
+    logger.info(_msg)
