@@ -175,5 +175,5 @@ if __name__ == "__main__":
     with access_connection(args.accdb) as conn:
         print(describe_access(conn, args.table))
     from .connect_sqlite import connection as sqlite_connection
-    with sqlite_connection(os.path.join("data", "sample.sqlite")) as conn:
+    with sqlite_connection(args.sqlite) as conn:
         print(describe_sqlite(conn, args.table))
