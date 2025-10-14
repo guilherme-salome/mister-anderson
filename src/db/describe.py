@@ -160,13 +160,20 @@ def describe_sqlite(connection, table):
 
 
 if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description="Example script using argparse")
+    parser.add_argument("accdb", help="Path to Microsoft Access database")
+    parser.add_argument("sqlite", nargs="?", help="Path to SQLite database (optional)")
+    parser.add_argument("table", help="Table name")
+    args = parser.parse_args()
+    if args.sqlite is None:
+        base, _ = os.path.splitext(args.accdb)
+        args.sqlite = base + ".sqlite"
+        logger.info(f"SQLite Database: {args.sqlite}")
+
     from .connect_access import connection as access_connection
-    with access_connection(os.path.join("data", "sample.accdb")) as conn:
-        print("sample.accdb")
-        print(describe_access(conn, "people"))
-        print(describe_access(conn, "orders"))
+    with access_connection(args.accdb) as conn:
+        print(describe_access(conn, args.table))
     from .connect_sqlite import connection as sqlite_connection
     with sqlite_connection(os.path.join("data", "sample.sqlite")) as conn:
-        print("sample.sqlite")
-        print(describe_sqlite(conn, "people"))
-        print(describe_sqlite(conn, "orders"))
+        print(describe_sqlite(conn, args.table))
