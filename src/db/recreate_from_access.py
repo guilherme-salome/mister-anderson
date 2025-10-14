@@ -52,19 +52,19 @@ def create_single_table(accdb_path: str,
         return
     ddl = build_sqlite_create(table, cols, pk_cols, fks)
     if preview:
-        print(f"\n-- {table}")
-        print(ddl)
+        logger.info(f"\n-- {table}")
+        logger.info(ddl)
     with sqlite_connection(sqlite_path) as con:
         cur = con.cursor()
         if table_exists(sqlite_path, table):
             if not overwrite:
-                print(f"SQLite table {table} already exists. Skipping (use overwrite=True to drop).")
+                logger.warn(f"SQLite table {table} already exists. Skipping (use overwrite=True to drop).")
                 return
             cur.execute(f"DROP TABLE IF EXISTS {qident(table)}")
             con.commit()
         cur.execute(ddl)
         con.commit()
-        print(f"Created SQLite table {table}")
+        logger.info(f"Created SQLite table {table}")
     assert same_columns(accdb_path, sqlite_path, table), "Columns do not match"
 
 def sync_access_to_sqlite(accdb_path: str,
@@ -96,7 +96,7 @@ def sync_access_to_sqlite(accdb_path: str,
         while (rows := acc_cur.fetchmany(chunk_size)):
             sqlite_cur.executemany(sql, rows)
         sqlite_con.commit()
-    print(f"Synchronized table {table}")
+    logger.info(f"Synchronized table {table}")
 
 def sync_sqlite_to_access(sqlite_path: str,
                           accdb_path: str,
@@ -123,4 +123,4 @@ def sync_sqlite_to_access(sqlite_path: str,
                 if not a_cur.rowcount:
                     a_cur.execute(f"INSERT INTO {qident(table, 'access')} ({quoted_cols}) VALUES ({placeholders})", r)
         a_con.commit()
-    print(f"Synchronized table {table} (SQLite → Access)")
+    logger.info(f"Synchronized table {table} (SQLite → Access)")
