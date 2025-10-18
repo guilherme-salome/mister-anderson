@@ -4,7 +4,7 @@ from typing import List, Dict, Tuple
 
 from .connect_access import connection as access_connection
 from .connect_sqlite import connection as sqlite_connection
-from .utils import list_tables, describe_table, access_to_sqlite_type, qident, table_exists, same_columns
+from .utils import list_tables, describe_table, access_to_sqlite_type, qident, table_exists, same_columns, blob_to_bytes
 
 logger = logging.getLogger(__name__)
 
@@ -45,8 +45,11 @@ def create_single_table(accdb_path: str,
                         sqlite_path: str,
                         table: str,
                         overwrite: bool = False,
-                        preview: bool = True):
+                        preview: bool = True,
+                        pk_override: List[str] | None = None):
     cols, pk_cols, fks = describe_table(accdb_path, table)
+    if pk_override:
+        pk_cols = pk_override
     if not cols:
         logger.warning(f"{table}: no columns found; skipping")
         return
@@ -70,8 +73,11 @@ def create_single_table(accdb_path: str,
 def sync_access_to_sqlite(accdb_path: str,
                           sqlite_path: str,
                           table: str,
-                          chunk_size: int = 1000):
+                          chunk_size: int = 1000,
+                          pk_override: List[str] | None = None):
     cols, pk_cols, _ = describe_table(accdb_path, table, verbose=False)
+    if pk_override:
+        pk_cols = pk_override
     if not pk_cols:
         raise ValueError(f"{table}: cannot sync without a primary key")
     col_names = [c["name"] for c in cols]
@@ -89,11 +95,23 @@ def sync_access_to_sqlite(accdb_path: str,
         ON CONFLICT({conflict_cols}) DO UPDATE SET
           {upsert_clause}
     """
+    # indices of BLOB columns (attachments/OLE)
+    blob_idxs = [i for i, c in enumerate(cols) if access_to_sqlite_type(c["type_name"]) == "BLOB"]
+    if blob_idxs:
+        logger.warn(f"Identified BLOB types in data {[cols[i] for i in blob_idxs]}")
+
     with access_connection(accdb_path) as acc_con, sqlite_connection(sqlite_path) as sqlite_con:
         acc_cur = acc_con.cursor()
         sqlite_cur = sqlite_con.cursor()
         acc_cur.execute(f"SELECT {quoted_cols} FROM {qident(table, 'access')}")
         while (rows := acc_cur.fetchmany(chunk_size)):
+            # coerce BLOB values to bytes for SQLite
+            if blob_idxs:
+                rows = [
+                    tuple(blob_to_bytes(v) if i in blob_idxs else v
+                          for i, v in enumerate(r))
+                    for r in rows
+                ]
             sqlite_cur.executemany(sql, rows)
         sqlite_con.commit()
     logger.info(f"Synchronized table {table}")
@@ -124,3 +142,21 @@ def sync_sqlite_to_access(sqlite_path: str,
                     a_cur.execute(f"INSERT INTO {qident(table, 'access')} ({quoted_cols}) VALUES ({placeholders})", r)
         a_con.commit()
     logger.info(f"Synchronized table {table} (SQLite → Access)")
+
+
+if __name__ == "__main__":
+    import os
+    import argparse
+    parser = argparse.ArgumentParser(description="Create Access table in SQLite")
+    parser.add_argument("accdb", help="Path to Microsoft Access database")
+    parser.add_argument("sqlite", nargs="?", help="Path to SQLite database (optional)")
+    parser.add_argument("table", help="Table name")
+    args = parser.parse_args()
+    logger.info(f"Access Database: {args.accdb}")
+    # SQLite db has the same name as the Access db, but different extension
+    if args.sqlite is None:
+        base, _ = os.path.splitext(args.accdb)
+        args.sqlite = base + ".sqlite"
+        logger.info(f"SQLite Database: {args.sqlite}")
+
+    create_single_table(args.accdb, args.sqlite, args.table, True)
