@@ -84,18 +84,37 @@ def describe_table(db_path, table, verbose = True):
 
     return cols, pk, fks
 
+_ACCESS_NUMERIC_TYPES = {
+    "COUNTER", "AUTOINCREMENT", "IDENTITY", "LONG", "INTEGER", "INT", "SMALLINT"
+}
+_ACCESS_REAL_TYPES = {
+    "DOUBLE", "FLOAT", "REAL", "SINGLE", "NUMERIC", "DECIMAL", "MONEY", "CURRENCY"
+}
+_ACCESS_DATE_TYPES = {"DATETIME", "DATE", "TIME", "TIMESTAMP"}
+_ACCESS_BOOLEAN_TYPES = {"YESNO", "BOOLEAN", "BIT"}
+_ACCESS_BINARY_TYPES = {"OTHER", "BINARY", "VARBINARY", "IMAGE", "OLEOBJECT"}
+
+
+def is_access_binary_type(type_name: str) -> bool:
+    """Return True if the Access type name represents a binary column."""
+    return (type_name or "").upper() in _ACCESS_BINARY_TYPES
+
+
 def access_to_sqlite_type(type_name: str) -> str:
     t = (type_name or "").upper()
-    if t in ("COUNTER", "AUTOINCREMENT", "IDENTITY", "LONG", "INTEGER", "INT", "SMALLINT"):
+    if t in _ACCESS_NUMERIC_TYPES:
         return "INTEGER"
-    if t in ("DOUBLE", "FLOAT", "REAL", "SINGLE", "NUMERIC", "DECIMAL", "MONEY", "CURRENCY"):
+    if t in _ACCESS_REAL_TYPES:
         return "REAL"
-    if t in ("DATETIME", "DATE", "TIME", "TIMESTAMP"):
+    if t in _ACCESS_DATE_TYPES:
         return "TEXT"  # store ISO8601
-    if t in ("YESNO", "BOOLEAN", "BIT"):
+    if t in _ACCESS_BOOLEAN_TYPES:
         return "INTEGER"  # 0/1
-    if t in ("OTHER", "BINARY", "VARBINARY", "IMAGE", "OLEOBJECT"):
-        return "BLOB"
+    if t in _ACCESS_BINARY_TYPES:
+        # Binary data is ignored during sync and stored as NULL-able TEXT
+        # fields in SQLite so downstream consumers can treat the column like
+        # any other string column.
+        return "TEXT"
     return "TEXT"
 
 def qident(name: str, dialect: str = 'sqlite') -> str:
@@ -170,24 +189,3 @@ def print_table(db_path: str, table: str, subsample: int = 100):
         + df.to_string(index=False)
     logger.info(_msg)
 
-def blob_to_bytes(x):
-    if x is None:
-        return None
-    if isinstance(x, (bytes, bytearray, memoryview)):
-        return bytes(x)
-    # Primitive java byte[] often works with bytes(); catch failures
-    try:
-        return bytes(x)
-    except Exception:
-        pass
-    # java.sql.Blob-like (getBytes(start,len), length())
-    if hasattr(x, "getBytes") and hasattr(x, "length"):
-        try:
-            return bytes(x.getBytes(1, int(x.length())))
-        except Exception:
-            pass
-    # Multi-attachment: take first item
-    if hasattr(x, "__iter__") and not isinstance(x, (str, bytes)):
-        for it in x:
-            return blob_to_bytes(it)
-    return None
