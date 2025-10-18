@@ -95,7 +95,10 @@ def access_to_sqlite_type(type_name: str) -> str:
     if t in ("YESNO", "BOOLEAN", "BIT"):
         return "INTEGER"  # 0/1
     if t in ("OTHER", "BINARY", "VARBINARY", "IMAGE", "OLEOBJECT"):
-        return "BLOB"
+        # Binary data is ignored during sync and stored as NULL-able TEXT
+        # fields in SQLite so downstream consumers can treat the column like
+        # any other string column.
+        return "TEXT"
     return "TEXT"
 
 def qident(name: str, dialect: str = 'sqlite') -> str:
@@ -170,24 +173,3 @@ def print_table(db_path: str, table: str, subsample: int = 100):
         + df.to_string(index=False)
     logger.info(_msg)
 
-def blob_to_bytes(x):
-    if x is None:
-        return None
-    if isinstance(x, (bytes, bytearray, memoryview)):
-        return bytes(x)
-    # Primitive java byte[] often works with bytes(); catch failures
-    try:
-        return bytes(x)
-    except Exception:
-        pass
-    # java.sql.Blob-like (getBytes(start,len), length())
-    if hasattr(x, "getBytes") and hasattr(x, "length"):
-        try:
-            return bytes(x.getBytes(1, int(x.length())))
-        except Exception:
-            pass
-    # Multi-attachment: take first item
-    if hasattr(x, "__iter__") and not isinstance(x, (str, bytes)):
-        for it in x:
-            return blob_to_bytes(it)
-    return None

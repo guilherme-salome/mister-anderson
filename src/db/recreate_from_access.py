@@ -4,7 +4,7 @@ from typing import List, Dict, Tuple
 
 from .connect_access import connection as access_connection
 from .connect_sqlite import connection as sqlite_connection
-from .utils import list_tables, describe_table, access_to_sqlite_type, qident, table_exists, same_columns, blob_to_bytes
+from .utils import list_tables, describe_table, access_to_sqlite_type, qident, table_exists, same_columns
 
 logger = logging.getLogger(__name__)
 
@@ -95,22 +95,25 @@ def sync_access_to_sqlite(accdb_path: str,
         ON CONFLICT({conflict_cols}) DO UPDATE SET
           {upsert_clause}
     """
-    # indices of BLOB columns (attachments/OLE)
-    blob_idxs = [i for i, c in enumerate(cols) if access_to_sqlite_type(c["type_name"]) == "BLOB"]
-    if blob_idxs:
-        logger.warn(f"Identified BLOB types in data {[cols[i] for i in blob_idxs]}")
+    binary_idx_set = {
+        i for i, c in enumerate(cols)
+        if (c.get("type_name") or "").upper() in {"OTHER", "BINARY", "VARBINARY", "IMAGE", "OLEOBJECT"}
+    }
+    if binary_idx_set:
+        logger.info(
+            "Binary columns will be stored as NULLs in SQLite: %s",
+            [cols[i]["name"] for i in binary_idx_set],
+        )
 
     with access_connection(accdb_path) as acc_con, sqlite_connection(sqlite_path) as sqlite_con:
         acc_cur = acc_con.cursor()
         sqlite_cur = sqlite_con.cursor()
         acc_cur.execute(f"SELECT {quoted_cols} FROM {qident(table, 'access')}")
         while (rows := acc_cur.fetchmany(chunk_size)):
-            # coerce BLOB values to bytes for SQLite
-            if blob_idxs:
+            if binary_idx_set:
                 rows = [
-                    tuple(blob_to_bytes(v) if i in blob_idxs else v
-                          for i, v in enumerate(r))
-                    for r in rows
+                    tuple(None if idx in binary_idx_set else value for idx, value in enumerate(row))
+                    for row in rows
                 ]
             sqlite_cur.executemany(sql, rows)
         sqlite_con.commit()
