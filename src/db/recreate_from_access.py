@@ -4,7 +4,15 @@ from typing import List, Dict, Tuple
 
 from .connect_access import connection as access_connection
 from .connect_sqlite import connection as sqlite_connection
-from .utils import list_tables, describe_table, access_to_sqlite_type, qident, table_exists, same_columns
+from .utils import (
+    list_tables,
+    describe_table,
+    access_to_sqlite_type,
+    is_access_binary_type,
+    qident,
+    table_exists,
+    same_columns,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -22,10 +30,18 @@ def build_sqlite_create(table: str,
     for c in acc_cols:
         name = qident(c["name"])
         t = access_to_sqlite_type(c["type_name"])
+        is_binary = is_access_binary_type(c.get("type_name"))
         if single_int_pk and c["name"] == pk_cols[0]:
             defs.append(f"{name} INTEGER PRIMARY KEY")
         else:
-            nn = " NOT NULL" if not c.get("nullable", True) else ""
+            required = not c.get("nullable", True)
+            if required and is_binary:
+                logger.warning(
+                    "%s.%s: relaxing NOT NULL constraint for binary column so values can be dropped",
+                    table,
+                    c["name"],
+                )
+            nn = " NOT NULL" if required and not is_binary else ""
             defs.append(f"{name} {t}{nn}")
     # composite PK
     if pk_cols and not single_int_pk:
@@ -97,7 +113,7 @@ def sync_access_to_sqlite(accdb_path: str,
     """
     binary_idx_set = {
         i for i, c in enumerate(cols)
-        if (c.get("type_name") or "").upper() in {"OTHER", "BINARY", "VARBINARY", "IMAGE", "OLEOBJECT"}
+        if is_access_binary_type(c.get("type_name"))
     }
     if binary_idx_set:
         logger.info(
