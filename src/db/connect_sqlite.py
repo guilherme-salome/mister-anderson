@@ -21,7 +21,7 @@ PRAGMAS = [
 
 def apply_pragmas(conn: sqlite3.Connection):
     for p in PRAGMAS:
-        logger.debug(f"Applying PRAGMA: {p}")
+        logger.debug("Applying PRAGMA: %s", p)
         conn.execute(p)
 
 
@@ -29,7 +29,7 @@ def get_connection(path: str) -> sqlite3.Connection:
     connection = sqlite3.connect(path)
     connection.row_factory = sqlite3.Row
     apply_pragmas(connection)
-    logger.info(f"Opened database at {path}")
+    logger.debug("Opened database at %s", path)
     return connection
 
 
@@ -49,9 +49,9 @@ if __name__ == "__main__":
         raise SystemExit("Usage: python connect_sqlite.py path/to/db.sqlite")
     with connection(path) as conn:
         cur = conn.cursor()
-        print(f"Connected to {path}.")
+        logger.info("Connected to %s.", path)
         cur.execute("PRAGMA table_list;")
-        print("Tables:")
+        logger.info("Tables:")
         for row in cur.fetchall():
             if row["type"] in ("table", "view") and not row["name"].startswith("sqlite_"):
-                print(f"{row['schema']}.{row['name']}")
+                logger.info("%s.%s", row["schema"], row["name"])

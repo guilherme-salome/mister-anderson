@@ -42,28 +42,28 @@ def describe_table(db_path, table, verbose = True):
         with sqlite_connection(db_path) as con:
             cols, pk, fks = describe_sqlite(con, table)
     if verbose:
-        print(f"Table: {table}")
-        # Columns
+        lines = [f"Table: {table}"]
+
         def type_disp(c):
             size = c.get("size")
             return f'{c.get("type_name","")}{f"({size})" if size is not None else ""}'
 
         name_w = max((len(c["name"]) for c in cols), default=4)
         type_w = max((len(type_disp(c)) for c in cols), default=4)
-        print("Columns:")
+        lines.append("Columns:")
         for c in cols:
             n = c["name"]
             t = type_disp(c)
             nn = "NULL" if c.get("nullable", True) else "NOT NULL"
             pk_mark = "*" if n in pk else " "
-            print(f"  {pk_mark} {n:<{name_w}}  {t:<{type_w}}  {nn}")
-        # Primary key
+            lines.append(f"  {pk_mark} {n:<{name_w}}  {t:<{type_w}}  {nn}")
+
         if pk:
-            print(f"Primary key: ({', '.join(pk)})")
+            lines.append(f"Primary key: ({', '.join(pk)})")
         else:
-            print("Primary key: <none>")
-        # Foreign keys
-        print("Foreign keys:")
+            lines.append("Primary key: <none>")
+
+        lines.append("Foreign keys:")
         if fks:
             for fk in fks:
                 fk_name = fk.get("name") or "<unnamed>"
@@ -78,9 +78,14 @@ def describe_table(db_path, table, verbose = True):
                 if dele:
                     extras.append(f"ON DELETE {dele}")
                 extras_s = f" [{' ,'.join(extras)}]" if extras else ""
-                print(f"  - {fk_name}: ({cols_s}) -> {ref_tbl} ({ref_cols_s}){extras_s}")
+                lines.append(f"  - {fk_name}: ({cols_s}) -> {ref_tbl} ({ref_cols_s}){extras_s}")
         else:
-            print("  <none>")
+            lines.append("  <none>")
+
+        logger.info(lines[0])
+        detail_lines = lines[1:]
+        if detail_lines and logger.isEnabledFor(logging.DEBUG):
+            logger.debug("\n".join(detail_lines))
 
     return cols, pk, fks
 
@@ -177,7 +182,7 @@ def print_table(db_path: str, table: str, subsample: int = 100):
         headers = [desc[0] for desc in cur.description]
 
     if not rows:
-        logger.warn(f"Table '{table}' is empty.")
+        logger.warning("Table '%s' is empty.", table)
         return
 
     df = pd.DataFrame(rows, columns=headers)
@@ -188,4 +193,3 @@ def print_table(db_path: str, table: str, subsample: int = 100):
     _msg = f"\n-- Showing up to {subsample} rows from '{table}' ({len(rows)} retrieved) --\n" \
         + df.to_string(index=False)
     logger.info(_msg)
-

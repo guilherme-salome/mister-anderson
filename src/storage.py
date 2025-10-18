@@ -149,5 +149,6 @@ def list_tables() -> List[str]:
 
 
 if __name__ == "__main__":
-    print(f"Tables Stored in {DB_PATH}:")
-    print("\n".join(list_tables()))
+    logger.info("Tables stored in %s:", DB_PATH)
+    for name in list_tables():
+        logger.info(name)

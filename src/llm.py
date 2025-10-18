@@ -96,5 +96,5 @@ if __name__ == '__main__':
             raise Exception("Usage: python llm.py img1.jpg img2.png ...")
         client = openai.AsyncOpenAI(api_key=openai.api_key)
         result = await ask_with_images(client, images, "What do you see?")
-        print(result)
+        logger.info("LLM response: %s", result)
     asyncio.run(main())

@@ -63,7 +63,7 @@ def read_basic_users(machine='mister-anderson-webui'):
 
 if __name__ == "__main__":
     if read_token('api.telegram.com'):
-        print(f"Found Telegram Token in {authinfo}")
+        logger.info("Found Telegram Token in %s", authinfo)
     if read_token('api.openai.com'):
-        print(f"Found OpenAI Token in {authinfo}")
-    print(read_whitelist())
+        logger.info("Found OpenAI Token in %s", authinfo)
+    logger.debug("Whitelist contents: %s", read_whitelist())

@@ -173,7 +173,7 @@ if __name__ == "__main__":
 
     from .connect_access import connection as access_connection
     with access_connection(args.accdb) as conn:
-        print(describe_access(conn, args.table))
+        logger.info("Access schema: %s", describe_access(conn, args.table))
     from .connect_sqlite import connection as sqlite_connection
     with sqlite_connection(args.sqlite) as conn:
-        print(describe_sqlite(conn, args.table))
+        logger.info("SQLite schema: %s", describe_sqlite(conn, args.table))

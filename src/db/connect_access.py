@@ -36,10 +36,10 @@ def connect_access(accdb_path: str, new_db: str = None):
         raise RuntimeError("UCanAccess jars not found. Set UCANACCESS_CLASSPATH to the folder with /.jar files.")
     url = f"jdbc:ucanaccess://{os.path.abspath(accdb_path)}" + \
         (f";newdatabaseversion={new_db}" if new_db else "")
-    logger.info(f"Connection URL: {url}")
+    logger.debug("Connection URL: %s", url)
     driver = "net.ucanaccess.jdbc.UcanaccessDriver"
     conn = jaydebeapi.connect(driver, url, jars=jars)
-    logger.info(f"Connected to {accdb_path}")
+    logger.debug("Connected to %s", accdb_path)
     return conn
 
 
@@ -60,13 +60,13 @@ if __name__ == "__main__":
         raise SystemExit("Usage: python connect_access.py path/to/db.accdb")
     with connection(accdb) as conn:
         cur = conn.cursor()
-        print(f"Connected to {accdb}.")
+        logger.info("Connected to %s.", accdb)
         cur.execute("""
             SELECT TABLE_NAME
             FROM INFORMATION_SCHEMA.TABLES
             WHERE TABLE_SCHEMA = 'PUBLIC'
             ORDER BY TABLE_NAME;
         """)
-        print("Tables:")
+        logger.info("Tables:")
         for (name,) in cur.fetchall():
-            print(name)
+            logger.info("%s", name)
