@@ -5,7 +5,7 @@ import argparse
 import yaml
 
 from .utils import list_tables, print_table
-from .recreate_from_access import create_single_table, sync_access_to_sqlite
+from .recreate_from_access import create_single_table, sync_access_to_sqlite, sync_sqlite_to_access
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +27,10 @@ if __name__ == "__main__":
     parser.add_argument("accdb", help="Path to Microsoft Access database")
     parser.add_argument("sqlite", nargs="?", help="Path to SQLite database (optional)")
     parser.add_argument("--tables", nargs="*", default=[], help="List of tables to sync.")
+    parser.add_argument("--direction",
+                        choices=("access-to-sqlite", "sqlite-to-access"),
+                        default="access-to-sqlite",
+                        help="Direction of synchronization. Default is Access → SQLite.")
     args = parser.parse_args()
     logger.info(f"Access Database: {args.accdb}")
 
@@ -52,24 +56,31 @@ if __name__ == "__main__":
         logger.info(f"Syncing {table}")
         # Check if primary key for table is defined in YAML file
         pk_override = pk_map.get(table)
-        # Create table if it doesn't already exist
-        create_single_table(args.accdb, args.sqlite, table, pk_override = pk_override)
         try:
-            sync_access_to_sqlite(args.accdb, args.sqlite, table, pk_override = pk_override)
+            if args.direction == "access-to-sqlite":
+                # Create table if it doesn't already exist
+                create_single_table(args.accdb, args.sqlite, table, pk_override=pk_override)
+                sync_access_to_sqlite(args.accdb, args.sqlite, table, pk_override=pk_override)
+            else:
+                sync_sqlite_to_access(args.sqlite, args.accdb, table, pk_override=pk_override)
         except ValueError as e:
             # No primary key defined in YAML and in table
             if "cannot sync without a primary key" in str(e):
                 cols = input("Primary key undefined. Please provide name of column(s) to be primary key(s):")
-                pk_override = [x.strip() for x in cols.split(",")]
+                pk_override = [x.strip() for x in cols.split(",") if x.strip()]
                 if not pk_override:
                     raise ValueError(f"Undefined primary key for table {table}")
                 logger.warning(f"Provided primary key(s): {pk_override}")
-                # Need to re-create the table because it was created without a PK
-                create_single_table(args.accdb, args.sqlite, table, overwrite = True, pk_override = pk_override)
-                sync_access_to_sqlite(args.accdb, args.sqlite, table, pk_override = pk_override)
+                if args.direction == "access-to-sqlite":
+                    # Need to re-create the table because it was created without a PK
+                    create_single_table(args.accdb, args.sqlite, table, overwrite=True, pk_override=pk_override)
+                    sync_access_to_sqlite(args.accdb, args.sqlite, table, pk_override=pk_override)
+                else:
+                    sync_sqlite_to_access(args.sqlite, args.accdb, table, pk_override=pk_override)
             else:
                 raise Exception(e)
         if pk_override:
             pk_map[table] = pk_override
             save_pk_map(pk_map_path, pk_map)
-        print_table(args.sqlite, table.upper(), subsample = 10)
+        if args.direction == "access-to-sqlite":
+            print_table(args.sqlite, table.upper(), subsample = 10)
