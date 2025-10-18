@@ -138,8 +138,11 @@ def sync_access_to_sqlite(accdb_path: str,
 def sync_sqlite_to_access(sqlite_path: str,
                           accdb_path: str,
                           table: str,
-                          chunk_size: int = 1000):
+                          chunk_size: int = 1000,
+                          pk_override: List[str] | None = None):
     cols, pk_cols, _ = describe_table(accdb_path, table, verbose=False)
+    if pk_override:
+        pk_cols = pk_override
     if not pk_cols:
         raise ValueError(f"{table}: cannot sync without a primary key")
 
