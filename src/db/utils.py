@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 import logging
-
-import pandas as pd
+from typing import Sequence
 
 from .connect_access import connection as access_connection
 from .connect_sqlite import connection as sqlite_connection
@@ -166,6 +165,60 @@ def same_columns(accdb_path: str, sqlite_path: str, table: str) -> bool:
         return [c["name"] for c in cols]
     return sig(accdb_path) == sig(sqlite_path)
 
+def _format_value(value) -> str:
+    if value is None:
+        return "NULL"
+    if isinstance(value, bytes):
+        return f"<BLOB {len(value)} bytes>"
+    return str(value)
+
+
+def _render_horizontal(headers: Sequence[str], rows: Sequence[Sequence[str]]) -> str:
+    if not rows:
+        return ""
+    widths = [
+        max(len(headers[i]), *(len(row[i]) for row in rows))
+        for i in range(len(headers))
+    ]
+    lines = [
+        " | ".join(headers[i].ljust(widths[i]) for i in range(len(headers))),
+        "-+-".join("-" * widths[i] for i in range(len(headers))),
+    ]
+    for row in rows:
+        lines.append(" | ".join(row[i].ljust(widths[i]) for i in range(len(headers))))
+    return "\n".join(lines)
+
+
+def _render_vertical(headers: Sequence[str], rows: Sequence[Sequence[str]]) -> str:
+    if not rows:
+        return ""
+    entry_labels = [f"Entry {i}" for i in range(1, len(rows[0]) + 1)]
+    row_labels = list(headers)
+    first_col_header = "Column [Type]"
+    first_col_width = max(len(first_col_header), *(len(label) for label in row_labels))
+    other_widths = [
+        max(len(entry_labels[i]), *(len(rows[row_idx][i]) for row_idx in range(len(row_labels))))
+        for i in range(len(entry_labels))
+    ]
+    header_line = " | ".join(
+        [first_col_header.ljust(first_col_width)]
+        + [entry_labels[i].ljust(other_widths[i]) for i in range(len(entry_labels))]
+    )
+    separator_line = "-+-".join(
+        ["-" * first_col_width] + ["-" * other_widths[i] for i in range(len(entry_labels))]
+    )
+    lines = [header_line, separator_line]
+    for idx, label in enumerate(row_labels):
+        values = rows[idx]
+        lines.append(
+            " | ".join(
+                [label.ljust(first_col_width)]
+                + [values[i].ljust(other_widths[i]) for i in range(len(entry_labels))]
+            )
+        )
+    return "\n".join(lines)
+
+
 def print_table(db_path: str, table: str, subsample: int = 100, vertical: bool = False):
     """
     Pretty-print up to `subsample` rows from a table in Access or SQLite.
@@ -190,23 +243,30 @@ def print_table(db_path: str, table: str, subsample: int = 100, vertical: bool =
         logger.warning("Table '%s' is empty.", table)
         return
 
+    cols_meta, _, _ = describe_table(db_path, table, verbose=False)
+    type_lookup = {col["name"]: (col.get("type_name") or "").upper() for col in cols_meta}
+
     orientation = "vertical" if vertical else "horizontal"
     summary = (
         f"-- Showing up to {subsample} rows from '{table}' ({len(rows)} retrieved, "
         f"layout={orientation}) --"
     )
 
-    df = pd.DataFrame(rows, columns=headers)
-    pd.set_option("display.max_columns", None)
-    pd.set_option("display.width", 180)
-    pd.set_option("display.max_rows", 20)
+    headers_with_types = [
+        f"{name} [{type_lookup.get(name, '') or 'UNKNOWN'}]" for name in headers
+    ]
+    formatted_rows = [
+        [_format_value(value) for value in row] for row in rows
+    ]
 
     if vertical:
-        transposed = df.transpose()
-        transposed.columns = [f"Row {idx}" for idx in range(1, len(transposed.columns) + 1)]
-        detail = transposed.to_string()
-        logger.info("%s\n%s", summary, detail)
-        return
+        transposed_rows: list[list[str]] = []
+        for col_idx, header in enumerate(headers_with_types):
+            transposed_rows.append(
+                [formatted_rows[row_idx][col_idx] for row_idx in range(len(formatted_rows))]
+            )
+        detail = _render_vertical(headers_with_types, transposed_rows)
+    else:
+        detail = _render_horizontal(headers_with_types, formatted_rows)
 
-    detail = df.to_string(index=False)
     logger.info("%s\n%s", summary, detail)
