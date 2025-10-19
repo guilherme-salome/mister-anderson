@@ -219,12 +219,13 @@ def _render_vertical(headers: Sequence[str], rows: Sequence[Sequence[str]]) -> s
     return "\n".join(lines)
 
 
-def print_table(db_path: str, table: str, subsample: int = 100, vertical: bool = False):
+def print_table(db_path: str, table: str, subsample: int = 5, vertical: bool = True):
     """
     Pretty-print up to `subsample` rows from a table in Access or SQLite.
 
-    Set `vertical=True` to display rows one record per block, which can be
-    easier to read for wide tables.
+    By default rows are displayed vertically (one record per column), which is
+    easier to read for wide tables. Set `vertical=False` to switch to the
+    traditional horizontal layout.
     """
     if db_path.endswith("accdb"):
         con_func, dialect = access_connection, "access"

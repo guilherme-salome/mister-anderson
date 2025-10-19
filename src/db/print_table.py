@@ -24,13 +24,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--limit",
         type=int,
-        default=100,
-        help="Maximum number of rows to display (default: 100).",
+        default=5,
+        help="Maximum number of rows to display (default: 5).",
     )
     parser.add_argument(
-        "--vertical",
+        "--horizontal",
         action="store_true",
-        help="Display rows vertically (one record per block). Default is horizontal layout.",
+        help="Display rows horizontally (entries as rows). Vertical layout is the default.",
     )
     parser.add_argument(
         "--log-level",
@@ -48,7 +48,8 @@ def main():
         format="%(asctime)s - %(threadName)s - %(name)s - %(levelname)s - %(message)s",
         level=level,
     )
-    orientation = "vertical" if args.vertical else "horizontal"
+    vertical = not args.horizontal
+    orientation = "vertical" if vertical else "horizontal"
     logger.info(
         "Request to print up to %s rows from table '%s' in %s (layout: %s)",
         args.limit,
@@ -56,7 +57,7 @@ def main():
         args.database,
         orientation,
     )
-    print_table(args.database, args.table, subsample=args.limit, vertical=args.vertical)
+    print_table(args.database, args.table, subsample=args.limit, vertical=vertical)
 
 
 if __name__ == "__main__":
