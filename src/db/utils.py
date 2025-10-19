@@ -166,8 +166,13 @@ def same_columns(accdb_path: str, sqlite_path: str, table: str) -> bool:
         return [c["name"] for c in cols]
     return sig(accdb_path) == sig(sqlite_path)
 
-def print_table(db_path: str, table: str, subsample: int = 100):
-    """Pretty-print up to `subsample` rows from a table in Access or SQLite."""
+def print_table(db_path: str, table: str, subsample: int = 100, vertical: bool = False):
+    """
+    Pretty-print up to `subsample` rows from a table in Access or SQLite.
+
+    Set `vertical=True` to display rows one record per block, which can be
+    easier to read for wide tables.
+    """
     if db_path.endswith("accdb"):
         con_func, dialect = access_connection, "access"
     elif db_path.endswith("sqlite"):
@@ -185,11 +190,23 @@ def print_table(db_path: str, table: str, subsample: int = 100):
         logger.warning("Table '%s' is empty.", table)
         return
 
+    orientation = "vertical" if vertical else "horizontal"
+    summary = (
+        f"-- Showing up to {subsample} rows from '{table}' ({len(rows)} retrieved, "
+        f"layout={orientation}) --"
+    )
+
     df = pd.DataFrame(rows, columns=headers)
     pd.set_option("display.max_columns", None)
     pd.set_option("display.width", 180)
     pd.set_option("display.max_rows", 20)
 
-    _msg = f"\n-- Showing up to {subsample} rows from '{table}' ({len(rows)} retrieved) --\n" \
-        + df.to_string(index=False)
-    logger.info(_msg)
+    if vertical:
+        transposed = df.transpose()
+        transposed.columns = [f"Row {idx}" for idx in range(1, len(transposed.columns) + 1)]
+        detail = transposed.to_string()
+        logger.info("%s\n%s", summary, detail)
+        return
+
+    detail = df.to_string(index=False)
+    logger.info("%s\n%s", summary, detail)
