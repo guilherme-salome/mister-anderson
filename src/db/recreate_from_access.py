@@ -16,6 +16,63 @@ from .utils import (
 
 logger = logging.getLogger(__name__)
 
+PK_SUGGESTION_MAX_COLUMNS = 3
+
+
+def evaluate_primary_key(accdb_path: str, table: str, columns: List[str]) -> Dict[str, object]:
+    """
+    Check whether `columns` form a valid primary key in the Access table.
+    Returns a dict containing null row count, duplicate group count, and validity flag.
+    """
+    if not columns:
+        raise ValueError("At least one column is required to evaluate a primary key candidate.")
+
+    with access_connection(accdb_path) as con:
+        cur = con.cursor()
+        table_ident = qident(table, "access")
+        col_exprs = [qident(col, "access") for col in columns]
+
+        null_rows = 0
+        null_predicate = " OR ".join(f"{expr} IS NULL" for expr in col_exprs)
+        if null_predicate:
+            cur.execute(f"SELECT COUNT(*) FROM {table_ident} WHERE {null_predicate}")
+            null_rows = cur.fetchone()[0] or 0
+
+        cur.execute(
+            "SELECT COUNT(*) FROM ("
+            f" SELECT 1 FROM {table_ident}"
+            f" GROUP BY {', '.join(col_exprs)}"
+            " HAVING COUNT(*) > 1"
+            ") dup"
+        )
+        duplicate_groups = cur.fetchone()[0] or 0
+
+    return {
+        "columns": columns,
+        "null_rows": null_rows,
+        "duplicate_groups": duplicate_groups,
+        "is_valid": null_rows == 0 and duplicate_groups == 0,
+    }
+
+
+def suggest_primary_keys(accdb_path: str, table: str, max_columns: int = PK_SUGGESTION_MAX_COLUMNS) -> List[Dict[str, object]]:
+    """
+    Evaluate potential primary keys by testing the first `max_columns` columns in order.
+    Returns a list of evaluation dicts (one per attempt), stopping after the first valid candidate.
+    """
+    cols, _, _ = describe_table(accdb_path, table, verbose=False)
+    ordered = [c["name"] for c in cols]
+    max_len = min(max_columns, len(ordered))
+
+    attempts: List[Dict[str, object]] = []
+    for length in range(1, max_len + 1):
+        candidate = ordered[:length]
+        result = evaluate_primary_key(accdb_path, table, candidate)
+        attempts.append(result)
+        if result["is_valid"]:
+            break
+    return attempts
+
 
 def build_sqlite_create(table: str,
                         acc_cols: List[Dict],
