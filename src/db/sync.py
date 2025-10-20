@@ -4,7 +4,7 @@ import logging
 import argparse
 import yaml
 
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from .utils import list_tables, print_table, describe_table
 from .recreate_from_access import (
@@ -24,12 +24,44 @@ def load_pk_map(path: str) -> dict:
             data = yaml.safe_load(f) or {}
             if not isinstance(data, dict):
                 return {}
-            return {str(k).upper(): list(v) for k, v in data.items()}
+            normalized: Dict[str, Dict[str, object]] = {}
+            for key, value in data.items():
+                entry: Dict[str, object] = {"columns": None, "skip": False}
+                if isinstance(value, dict):
+                    cols = value.get("columns")
+                    if isinstance(cols, list) and cols:
+                        entry["columns"] = [str(c) for c in cols]
+                    elif isinstance(cols, str) and cols:
+                        entry["columns"] = [cols]
+                    entry["skip"] = bool(value.get("skip"))
+                elif isinstance(value, list):
+                    if value:
+                        entry["columns"] = [str(c) for c in value]
+                elif isinstance(value, str):
+                    if value.strip().lower() == "skip":
+                        entry["skip"] = True
+                    elif value.strip():
+                        entry["columns"] = [value.strip()]
+                elif isinstance(value, bool):
+                    entry["skip"] = value
+                normalized[str(key).upper()] = entry
+            return normalized
     return {}
 
 def save_pk_map(path: str, data: dict) -> None:
+    serializable: Dict[str, object] = {}
+    for key, entry in data.items():
+        skip = bool(entry.get("skip"))
+        columns = entry.get("columns")
+        payload: Dict[str, object] = {}
+        if columns:
+            payload["columns"] = columns
+        if skip:
+            payload["skip"] = True
+        if payload:
+            serializable[key] = payload
     with open(path, "w") as f:
-        yaml.safe_dump(data, f, sort_keys=True)
+        yaml.safe_dump(serializable, f, sort_keys=True)
 
 def _normalize_columns(candidates: List[str], available: Dict[str, str]) -> List[str]:
     normalized = []
@@ -40,9 +72,21 @@ def _normalize_columns(candidates: List[str], available: Dict[str, str]) -> List
         normalized.append(available[key])
     return normalized
 
-def resolve_primary_key(accdb: str, table: str, existing: List[str] | None) -> List[str]:
+def resolve_primary_key(accdb: str, table: str, existing_entry: Optional[Dict[str, object]]) -> tuple[List[str], bool]:
+    """
+    Determine a usable primary key for the given Access table.
+
+    Returns (columns, skip_flag) where `columns` is a list of column names when a valid
+    key is identified, and `skip_flag` is True when the user opts to skip syncing the table.
+    """
     cols_meta, _, _ = describe_table(accdb, table, verbose=False)
     available = {c["name"].lower(): c["name"] for c in cols_meta}
+    existing_columns: Optional[List[str]] = None
+    if existing_entry:
+        if existing_entry.get("skip"):
+            logger.info("Table %s was previously marked to skip syncing.", table)
+            return [], True
+        existing_columns = existing_entry.get("columns") or None
 
     def valid_or_none(columns: List[str] | None) -> List[str] | None:
         if not columns:
@@ -53,17 +97,21 @@ def resolve_primary_key(accdb: str, table: str, existing: List[str] | None) -> L
         if result["is_valid"]:
             return [available[col.lower()] for col in columns]
         logger.warning(
-            "Stored primary key %s is invalid for %s (null rows=%s, duplicate groups=%s).",
+            "Stored primary key %s is invalid for %s (null rows=%s, duplicate groups=%s, duplicate rows=%s).",
             columns,
             table,
             result["null_rows"],
             result["duplicate_groups"],
+            result["duplicate_rows"],
         )
         return None
 
-    pk = valid_or_none(existing)
+    pk = valid_or_none(existing_columns)
     if pk:
-        return pk
+        return pk, False
+
+    logger.info("Previewing original Access data for %s to help choose a primary key.", table)
+    print_table(accdb, table, subsample=5)
 
     attempts = suggest_primary_keys(accdb, table, PK_SUGGESTION_MAX_COLUMNS)
     valid_suggestions: List[Dict[str, object]] = []
@@ -74,7 +122,7 @@ def resolve_primary_key(accdb: str, table: str, existing: List[str] | None) -> L
         for attempt in attempts:
             cols_display = ", ".join(attempt["columns"])
             if attempt["is_valid"]:
-                logger.info("  %d) %s (unique, no NULLs)", selection_counter, cols_display)
+                logger.info("  %d) %s (unique, no NULLs, duplicate rows=0)", selection_counter, cols_display)
                 valid_suggestions.append({
                     "index": selection_counter,
                     "columns": attempt["columns"],
@@ -82,10 +130,11 @@ def resolve_primary_key(accdb: str, table: str, existing: List[str] | None) -> L
                 selection_counter += 1
             else:
                 logger.info(
-                    "  ✖ %s (null rows=%s, duplicate groups=%s)",
+                    "  ✖ %s (null rows=%s, duplicate groups=%s, duplicate rows=%s)",
                     cols_display,
                     attempt["null_rows"],
                     attempt["duplicate_groups"],
+                    attempt["duplicate_rows"],
                 )
     else:
         logger.info(
@@ -93,17 +142,27 @@ def resolve_primary_key(accdb: str, table: str, existing: List[str] | None) -> L
             PK_SUGGESTION_MAX_COLUMNS,
             table,
         )
+        logger.info(
+            "Note: duplicate group counts can stay the same or increase as more columns are evaluated, "
+            "because each grouping level measures how many column combinations repeat. The additional "
+            "metric `duplicate rows` shows the number of actual records that would violate uniqueness."
+        )
 
     while True:
         prompt = (
             "Primary key undefined. Enter column names separated by commas"
             + (" or choose a suggested combination" if valid_suggestions else "")
+            + " (type 'skip' to ignore this table)"
             + ": "
         )
         response = input(prompt).strip()
         if not response:
             logger.error("Primary key selection cannot be empty.")
             continue
+
+        if response.lower() in {"skip", "s"}:
+            logger.warning("User opted to skip syncing table %s due to missing primary key.", table)
+            return [], True
 
         if valid_suggestions and response.isdigit():
             idx = int(response)
@@ -135,13 +194,14 @@ def resolve_primary_key(accdb: str, table: str, existing: List[str] | None) -> L
 
         result = evaluate_primary_key(accdb, table, candidate)
         if result["is_valid"]:
-            return candidate
+            return candidate, False
 
         logger.error(
-            "Columns %s are not a valid primary key (null rows=%s, duplicate groups=%s).",
+            "Columns %s are not a valid primary key (null rows=%s, duplicate groups=%s, duplicate rows=%s).",
             ", ".join(candidate),
             result["null_rows"],
             result["duplicate_groups"],
+            result["duplicate_rows"],
         )
 
 if __name__ == "__main__":
@@ -177,15 +237,28 @@ if __name__ == "__main__":
     for table in args.tables:
         logger.info(f"Syncing {table}")
 
+        stored_entry = pk_map.get(table, {"columns": None, "skip": False})
+        if stored_entry.get("skip"):
+            logger.info("Skipping %s (marked to skip in primary key map).", table)
+            continue
+
         _, access_pk, _ = describe_table(args.accdb, table, verbose=False)
         pk_override = None
 
         if access_pk:
             logger.info("Using Access-defined primary key for %s: %s", table, ", ".join(access_pk))
+            if table in pk_map:
+                pk_map.pop(table, None)
+                save_pk_map(pk_map_path, pk_map)
         else:
-            stored_override = pk_map.get(table)
-            pk_override = resolve_primary_key(args.accdb, table, stored_override)
-            pk_map[table] = pk_override
+            pk_columns, skip_table = resolve_primary_key(args.accdb, table, stored_entry)
+            if skip_table:
+                pk_map[table] = {"columns": None, "skip": True}
+                save_pk_map(pk_map_path, pk_map)
+                logger.info("Skipping %s; decision recorded in PK map.", table)
+                continue
+            pk_override = pk_columns
+            pk_map[table] = {"columns": pk_override, "skip": False}
             save_pk_map(pk_map_path, pk_map)
             logger.info("Using override primary key for %s: %s", table, ", ".join(pk_override))
 
@@ -199,4 +272,4 @@ if __name__ == "__main__":
             raise Exception(f"Failed to sync table {table}: {e}") from e
 
         if args.direction == "access-to-sqlite":
-            print_table(args.sqlite, table.upper(), subsample = 10)
+            print_table(args.sqlite, table.upper(), subsample=10)

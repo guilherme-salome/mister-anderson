@@ -22,7 +22,7 @@ PK_SUGGESTION_MAX_COLUMNS = 3
 def evaluate_primary_key(accdb_path: str, table: str, columns: List[str]) -> Dict[str, object]:
     """
     Check whether `columns` form a valid primary key in the Access table.
-    Returns a dict containing null row count, duplicate group count, and validity flag.
+    Returns metrics describing null rows, duplicate groups, duplicate row count, and validity.
     """
     if not columns:
         raise ValueError("At least one column is required to evaluate a primary key candidate.")
@@ -39,18 +39,21 @@ def evaluate_primary_key(accdb_path: str, table: str, columns: List[str]) -> Dic
             null_rows = cur.fetchone()[0] or 0
 
         cur.execute(
-            "SELECT COUNT(*) FROM ("
-            f" SELECT 1 FROM {table_ident}"
+            "SELECT COUNT(*) AS group_count, SUM(dup_counts.cnt - 1) AS dup_rows FROM ("
+            f" SELECT COUNT(*) AS cnt FROM {table_ident}"
             f" GROUP BY {', '.join(col_exprs)}"
             " HAVING COUNT(*) > 1"
-            ") dup"
+            ") dup_counts"
         )
-        duplicate_groups = cur.fetchone()[0] or 0
+        result = cur.fetchone()
+        duplicate_groups = (result[0] or 0) if result is not None else 0
+        duplicate_rows = (result[1] or 0) if result is not None else 0
 
     return {
         "columns": columns,
         "null_rows": null_rows,
         "duplicate_groups": duplicate_groups,
+        "duplicate_rows": duplicate_rows,
         "is_valid": null_rows == 0 and duplicate_groups == 0,
     }
 
@@ -58,7 +61,7 @@ def evaluate_primary_key(accdb_path: str, table: str, columns: List[str]) -> Dic
 def suggest_primary_keys(accdb_path: str, table: str, max_columns: int = PK_SUGGESTION_MAX_COLUMNS) -> List[Dict[str, object]]:
     """
     Evaluate potential primary keys by testing the first `max_columns` columns in order.
-    Returns a list of evaluation dicts (one per attempt), stopping after the first valid candidate.
+    Returns a list of evaluation dicts (one per attempt) for review.
     """
     cols, _, _ = describe_table(accdb_path, table, verbose=False)
     ordered = [c["name"] for c in cols]
@@ -69,8 +72,6 @@ def suggest_primary_keys(accdb_path: str, table: str, max_columns: int = PK_SUGG
         candidate = ordered[:length]
         result = evaluate_primary_key(accdb_path, table, candidate)
         attempts.append(result)
-        if result["is_valid"]:
-            break
     return attempts
 
 
