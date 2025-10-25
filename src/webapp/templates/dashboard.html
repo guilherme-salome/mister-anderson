@@ -3,31 +3,36 @@
 <head>
   <meta charset="utf-8">
   <title>Dashboard</title>
-  <link rel="stylesheet" href="{{ url_for('static', path='/styles.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', path='styles.css') }}">
 </head>
 <body>
   <header class="app-header">
     <h1>Welcome</h1>
-    <a href="/logout" class="button danger">Logout</a>
+    <div class="actions">
+      {% if user.role == "admin" %}
+        <a href="/admin/users" class="button secondary">Manage Users</a>
+      {% endif %}
+      <a href="/logout" class="button danger">Logout</a>
+    </div>
   </header>
+
+  {% if flash %}
+    <div class="alert {{ flash.category }}">{{ flash.message }}</div>
+  {% endif %}
 
   <section class="card">
     <h2>Account</h2>
     <dl>
       <dt>User ID</dt>
-      <dd>{{ user.cod_usuario }}</dd>
-      <dt>Name</dt>
-      <dd>{{ user.usuario }}</dd>
+      <dd>{{ user.id }}</dd>
+      <dt>Username</dt>
+      <dd>{{ user.username }}</dd>
+      <dt>Full Name</dt>
+      <dd>{{ user.full_name }}</dd>
       <dt>Account Type</dt>
-      <dd>
-        {% if user.tipo == 1 %}
-          Admin <span class="badge">1</span>
-        {% else %}
-          Employee <span class="badge">{{ user.tipo }}</span>
-        {% endif %}
-      </dd>
+      <dd>{{ role_label }}</dd>
       <dt>Status</dt>
-      <dd>{{ "Active" if user.ativado else "Inactive" }}</dd>
+      <dd>{{ "Active" if user.is_active else "Inactive" }}</dd>
     </dl>
   </section>
 </body>
