@@ -4,8 +4,8 @@ import os
 import sqlite3
 from typing import Optional, Tuple, Dict, Any
 
-PROJECT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-DATA_DIR = os.path.join(PROJECT_DIR, "data")
+ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+DATA_DIR = os.path.join(ROOT_DIR, "data")
 DB_PATH = os.path.join(DATA_DIR, "webapp.sqlite")
 
 
