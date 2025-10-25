@@ -3,7 +3,7 @@
 import logging
 import os
 import sqlite3
-from typing import Optional
+from typing import Iterable, Optional
 
 import uvicorn
 from fastapi import FastAPI, Form, Request, status
@@ -23,6 +23,7 @@ from .db import (
     update_user_role,
     update_user_status,
 )
+from . import iassets
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(
@@ -64,6 +65,16 @@ def current_user(request: Request) -> Optional[dict]:
         return None
     data["is_active"] = bool(data.get("is_active", True))
     return data
+
+
+def ensure_access(request: Request, allowed_roles: Optional[Iterable[str]] = None):
+    user = current_user(request)
+    if not user:
+        return None, RedirectResponse(url="/", status_code=status.HTTP_302_FOUND)
+    if allowed_roles and user["role"] not in allowed_roles:
+        set_flash(request, "You do not have permission to view that page.", "error")
+        return user, RedirectResponse(url="/dashboard", status_code=status.HTTP_302_FOUND)
+    return user, None
 
 
 def set_flash(request: Request, message: str, category: str = "success") -> None:
@@ -108,14 +119,17 @@ async def login_action(
         "is_active": bool(user["is_active"]),
     }
     logger.info("User %s signed in.", user["username"])
-    return RedirectResponse(url="/dashboard", status_code=status.HTTP_302_FOUND)
+    return RedirectResponse(url="/pickups", status_code=status.HTTP_302_FOUND)
 
 
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard(request: Request):
-    user = current_user(request)
-    if not user:
-        return RedirectResponse(url="/", status_code=status.HTTP_302_FOUND)
+    user, redirect_resp = ensure_access(
+        request,
+        allowed_roles=("viewer", "employee", "supervisor", "admin"),
+    )
+    if redirect_resp:
+        return redirect_resp
     ctx = {
         "request": request,
         "user": user,
@@ -127,14 +141,48 @@ async def dashboard(request: Request):
     return templates.TemplateResponse("dashboard.html", ctx)
 
 
+@app.get("/pickups", response_class=HTMLResponse)
+async def pickups_overview(request: Request):
+    allowed = ("viewer", "employee", "supervisor", "admin")
+    user, redirect_resp = ensure_access(request, allowed_roles=allowed)
+    if redirect_resp:
+        return redirect_resp
+
+    pickups = iassets.list_recent_pickups()
+    flash = consume_flash(request)
+    ctx = {
+        "request": request,
+        "user": user,
+        "pickups": pickups,
+        "flash": flash,
+    }
+    return templates.TemplateResponse("pickups.html", ctx)
+
+
+@app.get("/pickups/{pickup_number}", response_class=HTMLResponse)
+async def pickup_detail(request: Request, pickup_number: int):
+    allowed = ("viewer", "employee", "supervisor", "admin")
+    user, redirect_resp = ensure_access(request, allowed_roles=allowed)
+    if redirect_resp:
+        return redirect_resp
+
+    items = iassets.fetch_pickup_items(pickup_number)
+    flash = consume_flash(request)
+    ctx = {
+        "request": request,
+        "user": user,
+        "pickup_number": pickup_number,
+        "items": items,
+        "flash": flash,
+    }
+    return templates.TemplateResponse("pickup_detail.html", ctx)
+
+
 @app.get("/admin/users", response_class=HTMLResponse)
 async def admin_users(request: Request):
-    user = current_user(request)
-    if not user:
-        return RedirectResponse(url="/", status_code=status.HTTP_302_FOUND)
-    if user["role"] != "admin":
-        set_flash(request, "Administrator access required.", "error")
-        return RedirectResponse(url="/dashboard", status_code=status.HTTP_302_FOUND)
+    user, redirect_resp = ensure_access(request, allowed_roles=("admin",))
+    if redirect_resp:
+        return redirect_resp
 
     ctx = {
         "request": request,
@@ -146,14 +194,11 @@ async def admin_users(request: Request):
     return templates.TemplateResponse("admin_users.html", ctx)
 
 
-def _require_admin(request: Request) -> Optional[RedirectResponse]:
-    user = current_user(request)
-    if not user:
-        return RedirectResponse(url="/", status_code=status.HTTP_302_FOUND)
-    if user["role"] != "admin":
-        set_flash(request, "Administrator access required.", "error")
-        return RedirectResponse(url="/dashboard", status_code=status.HTTP_302_FOUND)
-    return None
+def _require_admin(request: Request) -> tuple[Optional[dict], Optional[RedirectResponse]]:
+    user, redirect_resp = ensure_access(request, allowed_roles=("admin",))
+    if redirect_resp:
+        return None, redirect_resp
+    return user, None
 
 
 @app.post("/admin/users/create", response_class=HTMLResponse)
@@ -165,7 +210,7 @@ async def admin_create_user(
     account_status: str = Form(...),
     temp_password: str = Form(...),
 ):
-    redirect_resp = _require_admin(request)
+    admin_user, redirect_resp = _require_admin(request)
     if redirect_resp:
         return redirect_resp
 
@@ -202,7 +247,10 @@ async def admin_create_user(
     except ValueError as exc:
         set_flash(request, str(exc), "error")
     else:
-        logger.info("Admin created user %s (%s)", username, role)
+        if admin_user:
+            logger.info("Admin %s created user %s (%s)", admin_user["username"], username, role)
+        else:
+            logger.info("Admin created user %s (%s)", username, role)
         set_flash(request, f"User {username} created.", "success")
     return RedirectResponse(url="/admin/users", status_code=status.HTTP_302_FOUND)
 
@@ -213,7 +261,7 @@ async def admin_change_status(
     target_user: str = Form(...),
     new_status: int = Form(...),
 ):
-    redirect_resp = _require_admin(request)
+    admin_user, redirect_resp = _require_admin(request)
     if redirect_resp:
         return redirect_resp
 
@@ -225,7 +273,8 @@ async def admin_change_status(
     update_user_status(target["id"], is_active=bool(int(new_status)))
     action = "activated" if int(new_status) else "deactivated"
     set_flash(request, f"User {target['username']} {action}.", "success")
-    logger.info("Admin changed status for %s to %s", target["username"], action)
+    if admin_user:
+        logger.info("Admin %s changed status for %s to %s", admin_user["username"], target["username"], action)
     return RedirectResponse(url="/admin/users", status_code=status.HTTP_302_FOUND)
 
 
@@ -235,7 +284,7 @@ async def admin_change_role(
     role_username: str = Form(...),
     new_role: str = Form(...),
 ):
-    redirect_resp = _require_admin(request)
+    admin_user, redirect_resp = _require_admin(request)
     if redirect_resp:
         return redirect_resp
 
@@ -250,7 +299,8 @@ async def admin_change_role(
 
     update_user_role(target["id"], role=new_role)
     set_flash(request, f"Role updated to {new_role} for {target['username']}.", "success")
-    logger.info("Admin changed role for %s to %s", target["username"], new_role)
+    if admin_user:
+        logger.info("Admin %s changed role for %s to %s", admin_user["username"], target["username"], new_role)
     return RedirectResponse(url="/admin/users", status_code=status.HTTP_302_FOUND)
 
 
@@ -261,7 +311,7 @@ async def admin_reset_password(
     new_password: str = Form(...),
     confirm_password: str = Form(...),
 ):
-    redirect_resp = _require_admin(request)
+    admin_user, redirect_resp = _require_admin(request)
     if redirect_resp:
         return redirect_resp
 
@@ -279,7 +329,9 @@ async def admin_reset_password(
         return RedirectResponse(url="/admin/users", status_code=status.HTTP_302_FOUND)
 
     update_password(target["id"], new_password)
-    logger.info("Admin %s reset password for user %s", current_user(request)["username"], target["username"])
+    actor = admin_user or current_user(request)
+    if actor:
+        logger.info("Admin %s reset password for user %s", actor["username"], target["username"])
     set_flash(request, f"Password updated for {target['username']}.", "success")
     return RedirectResponse(url="/admin/users", status_code=status.HTTP_302_FOUND)
 

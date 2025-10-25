@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Pickups</title>
+  <link rel="stylesheet" href="{{ url_for('static', path='styles.css') }}">
+</head>
+<body>
+  <header class="app-header">
+    <h1>Pickups</h1>
+    <div class="actions">
+      <a href="/pickups" class="button secondary">Pickups</a>
+      <a href="/dashboard" class="button secondary">Account</a>
+      {% if user.role == 'admin' %}
+        <a href="/admin/users" class="button secondary">Manage Users</a>
+      {% endif %}
+      <a href="/logout" class="button danger">Logout</a>
+    </div>
+  </header>
+
+  {% if flash %}
+    <div class="alert {{ flash.category }}">{{ flash.message }}</div>
+  {% endif %}
+
+  <section class="card">
+    <p>Recent pickup numbers. Select one to view pallet entries and product descriptions.</p>
+  </section>
+
+  <section class="table-card">
+    <table>
+      <thead>
+        <tr>
+          <th>Pickup #</th>
+          <th>Total Items</th>
+          <th>Total Quantity</th>
+          <th>Last Update</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for p in pickups %}
+          <tr>
+            <td><a href="/pickups/{{ p.pickup }}">{{ p.pickup }}</a></td>
+            <td>{{ p.item_count or 0 }}</td>
+            <td>{{ p.total_quantity or 0 }}</td>
+            <td>{{ p.last_update or '—' }}</td>
+          </tr>
+        {% else %}
+          <tr>
+            <td colspan="4" style="text-align:center;">No pickup data available.</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+</body>
+</html>

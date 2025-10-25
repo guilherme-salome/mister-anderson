@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Pickup {{ pickup_number }}</title>
+  <link rel="stylesheet" href="{{ url_for('static', path='styles.css') }}">
+</head>
+<body>
+  <header class="app-header">
+    <h1>Pickup {{ pickup_number }}</h1>
+    <div class="actions">
+      <a href="/pickups" class="button secondary">Back to Pickups</a>
+      <a href="/dashboard" class="button secondary">Account</a>
+      {% if user.role == 'admin' %}
+        <a href="/admin/users" class="button secondary">Manage Users</a>
+      {% endif %}
+      <a href="/logout" class="button danger">Logout</a>
+    </div>
+  </header>
+
+  {% if flash %}
+    <div class="alert {{ flash.category }}">{{ flash.message }}</div>
+  {% endif %}
+
+  <section class="table-card">
+    <table>
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Pallet</th>
+          <th>Product ID</th>
+          <th>Quantity</th>
+          <th>Description</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in items %}
+          <tr>
+            <td>{{ loop.index }}</td>
+            <td>{{ item.COD_PALLET or '—' }}</td>
+            <td>{{ item.COD_ASSETS or item.get('COD_ASSETS_SQLITE') or '—' }}</td>
+            <td>{{ item.QUANTITY or 0 }}</td>
+            <td>{{ item.DESCRIPTION or '' }}</td>
+          </tr>
+        {% else %}
+          <tr>
+            <td colspan="5" style="text-align:center;">No items recorded for this pickup yet.</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+</body>
+</html>
