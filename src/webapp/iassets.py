@@ -2,7 +2,7 @@
 
 import os
 import sqlite3
-from typing import Dict, Iterable, List, Optional
+from typing import Dict, Iterable, List, Optional, Tuple
 
 
 ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -16,8 +16,22 @@ def _connect() -> sqlite3.Connection:
     return conn
 
 
-def list_recent_pickups(limit: int = 50) -> List[Dict[str, object]]:
-    query = (
+def list_pickups(
+    *,
+    page: int = 1,
+    page_size: int = 25,
+    pickup_query: Optional[int] = None,
+) -> Tuple[List[Dict[str, object]], int]:
+    """Return pickups for the requested page along with the total count."""
+
+    base_where = "pickup_number IS NOT NULL"
+    params: List = []
+    if pickup_query is not None:
+        base_where += " AND pickup_number = ?"
+        params.append(pickup_query)
+
+    count_sql = f"SELECT COUNT(DISTINCT pickup_number) FROM IASSETS WHERE {base_where}"
+    data_sql = (
         """
         SELECT
             pickup_number AS pickup,
@@ -25,34 +39,43 @@ def list_recent_pickups(limit: int = 50) -> List[Dict[str, object]]:
             SUM(COALESCE(quantity, 0)) AS total_quantity,
             MAX(COALESCE(dt_update, dt, dt_processed, dt_pickup)) AS last_update
         FROM IASSETS
-        WHERE pickup_number IS NOT NULL
+        WHERE {where}
         GROUP BY pickup_number
         ORDER BY pickup_number DESC
-        LIMIT ?
+        LIMIT ? OFFSET ?
         """
-    )
+    ).format(where=base_where)
+
+    page = max(page, 1)
+    offset = (page - 1) * page_size
+
     with _connect() as conn:
-        rows = conn.execute(query, (limit,)).fetchall()
-        return [dict(row) for row in rows]
+        total = conn.execute(count_sql, params).fetchone()[0]
+        query_params = params + [page_size, offset]
+        rows = conn.execute(data_sql, query_params).fetchall()
+
+    pickups = [dict(row) for row in rows]
+    return pickups, total
 
 
 def fetch_pickup_items(pickup_number: int, limit: Optional[int] = None) -> List[Dict[str, object]]:
-    columns = ["COD_PALLET", "COD_ASSETS", "QUANTITY", "DESCRIPTION"]
-    select_clause = ", ".join(columns + ["ROWID as row_id"])
+    columns = ["COD_PALLET", "COD_ASSETS", "COD_ASSETS_SQLITE", "QUANTITY", "DESCRIPTION"]
+    select_clause = ", ".join(columns + ["ROWID AS row_id"])
     query = (
         f"SELECT {select_clause} FROM IASSETS "
         "WHERE pickup_number = ? ORDER BY COALESCE(COD_PALLET, 0), ROWID"
     )
-    params = [pickup_number]
+    params: List = [pickup_number]
     if limit is not None:
         query += " LIMIT ?"
         params.append(limit)
+
     with _connect() as conn:
         rows = conn.execute(query, params).fetchall()
-        result = []
-        for row in rows:
-            data = dict(row)
-            data.setdefault("DESCRIPTION", "")
-            result.append(data)
-        return result
 
+    result = []
+    for row in rows:
+        data = dict(row)
+        data.setdefault("DESCRIPTION", "")
+        result.append(data)
+    return result

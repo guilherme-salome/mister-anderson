@@ -24,6 +24,14 @@
 
   <section class="card">
     <p>Recent pickup numbers. Select one to view pallet entries and product descriptions.</p>
+    <form method="get" action="/pickups" class="inline">
+      <label for="pickup_query">Find pickup</label>
+      <input type="number" id="pickup_query" name="q" value="{{ query or '' }}" placeholder="Enter pickup number">
+      <button type="submit">Search</button>
+      {% if query %}
+        <a href="/pickups" class="button secondary" style="padding:10px 16px;">Clear</a>
+      {% endif %}
+    </form>
   </section>
 
   <section class="table-card">
@@ -52,5 +60,21 @@
       </tbody>
     </table>
   </section>
+
+  <nav class="pagination">
+    {% if has_prev %}
+      <a href="/pickups?page={{ page - 1 }}{% if query %}&q={{ query }}{% endif %}" class="button secondary">&larr; Previous</a>
+    {% else %}
+      <span class="button disabled">&larr; Previous</span>
+    {% endif %}
+
+    <span class="page-info">Page {{ page }} of {{ total_pages }}</span>
+
+    {% if has_next %}
+      <a href="/pickups?page={{ page + 1 }}{% if query %}&q={{ query }}{% endif %}" class="button secondary">Next &rarr;</a>
+    {% else %}
+      <span class="button disabled">Next &rarr;</span>
+    {% endif %}
+  </nav>
 </body>
 </html>

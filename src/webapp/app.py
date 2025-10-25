@@ -142,19 +142,28 @@ async def dashboard(request: Request):
 
 
 @app.get("/pickups", response_class=HTMLResponse)
-async def pickups_overview(request: Request):
+async def pickups_overview(request: Request, page: int = 1, q: Optional[int] = None):
     allowed = ("viewer", "employee", "supervisor", "admin")
     user, redirect_resp = ensure_access(request, allowed_roles=allowed)
     if redirect_resp:
         return redirect_resp
 
-    pickups = iassets.list_recent_pickups()
+    page = max(page, 1)
+    page_size = 25
+    pickups, total = iassets.list_pickups(page=page, page_size=page_size, pickup_query=q)
+    total_pages = max((total + page_size - 1) // page_size, 1)
+
     flash = consume_flash(request)
     ctx = {
         "request": request,
         "user": user,
         "pickups": pickups,
         "flash": flash,
+        "page": page,
+        "total_pages": total_pages,
+        "has_prev": page > 1,
+        "has_next": page < total_pages,
+        "query": q,
     }
     return templates.TemplateResponse("pickups.html", ctx)
 
