@@ -27,3 +27,4 @@ th { background: #f1f5f9; font-weight: 600; }
 .inline button { width: auto; padding: 10px 16px; }
 .pagination { margin-top: 1.5rem; display: flex; justify-content: center; align-items: center; gap: 1rem; }
 .page-info { font-weight: 600; color: #475569; }
+.note { color: #475569; }

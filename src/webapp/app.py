@@ -88,6 +88,7 @@ def consume_flash(request: Request) -> Optional[dict]:
 @app.on_event("startup")
 async def startup_event():
     init_db()
+    iassets.ensure_support_tables()
     os.makedirs(TEMPLATES_DIR, exist_ok=True)
 
 
@@ -168,6 +169,26 @@ async def pickups_overview(request: Request, page: int = 1, q: Optional[int] = N
     return templates.TemplateResponse("pickups.html", ctx)
 
 
+@app.post("/pickups/create", response_class=HTMLResponse)
+async def create_pickup_route(request: Request, pickup_number: int = Form(...)):
+    allowed = ("employee", "supervisor", "admin")
+    user, redirect_resp = ensure_access(request, allowed_roles=allowed)
+    if redirect_resp:
+        return redirect_resp
+
+    try:
+        iassets.create_pickup(pickup_number, created_by=user["username"])
+    except ValueError as exc:
+        set_flash(request, str(exc), "error")
+        return RedirectResponse(url="/pickups", status_code=status.HTTP_302_FOUND)
+
+    set_flash(request, f"Pickup {pickup_number} created.", "success")
+    return RedirectResponse(
+        url=f"/pickups/{pickup_number}",
+        status_code=status.HTTP_302_FOUND,
+    )
+
+
 @app.get("/pickups/{pickup_number}", response_class=HTMLResponse)
 async def pickup_detail(request: Request, pickup_number: int):
     allowed = ("viewer", "employee", "supervisor", "admin")
@@ -175,14 +196,15 @@ async def pickup_detail(request: Request, pickup_number: int):
     if redirect_resp:
         return redirect_resp
 
-    items = iassets.fetch_pickup_items(pickup_number)
+    pallets = iassets.list_pallets(pickup_number)
     flash = consume_flash(request)
     ctx = {
         "request": request,
         "user": user,
         "pickup_number": pickup_number,
-        "items": items,
+        "pallets": pallets,
         "flash": flash,
+        "can_edit": user["role"] in ("employee", "supervisor", "admin"),
     }
     return templates.TemplateResponse("pickup_detail.html", ctx)
 
@@ -201,6 +223,54 @@ async def admin_users(request: Request):
         "flash": consume_flash(request),
     }
     return templates.TemplateResponse("admin_users.html", ctx)
+
+
+@app.post("/pickups/{pickup_number}/pallets/create", response_class=HTMLResponse)
+async def create_pallet_route(
+    request: Request,
+    pickup_number: int,
+    pallet_number: int = Form(...),
+):
+    user, redirect_resp = ensure_access(request, allowed_roles=("employee", "supervisor", "admin"))
+    if redirect_resp:
+        return redirect_resp
+
+    try:
+        iassets.create_pallet(pickup_number, pallet_number, created_by=user["username"])
+    except ValueError as exc:
+        set_flash(request, str(exc), "error")
+    else:
+        set_flash(request, f"Pallet {pallet_number} added to pickup {pickup_number}.", "success")
+
+    return RedirectResponse(
+        url=f"/pickups/{pickup_number}",
+        status_code=status.HTTP_302_FOUND,
+    )
+
+
+@app.get("/pickups/{pickup_number}/pallets/{pallet_number}", response_class=HTMLResponse)
+async def pallet_detail(
+    request: Request,
+    pickup_number: int,
+    pallet_number: int,
+):
+    allowed = ("viewer", "employee", "supervisor", "admin")
+    user, redirect_resp = ensure_access(request, allowed_roles=allowed)
+    if redirect_resp:
+        return redirect_resp
+
+    items = iassets.fetch_pallet_items(pickup_number, pallet_number)
+    flash = consume_flash(request)
+    ctx = {
+        "request": request,
+        "user": user,
+        "pickup_number": pickup_number,
+        "pallet_number": pallet_number,
+        "items": items,
+        "flash": flash,
+        "can_edit": user["role"] in ("employee", "supervisor", "admin"),
+    }
+    return templates.TemplateResponse("pallet_detail.html", ctx)
 
 
 def _require_admin(request: Request) -> tuple[Optional[dict], Optional[RedirectResponse]]:

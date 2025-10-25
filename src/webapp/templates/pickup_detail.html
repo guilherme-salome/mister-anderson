@@ -9,7 +9,7 @@
   <header class="app-header">
     <h1>Pickup {{ pickup_number }}</h1>
     <div class="actions">
-      <a href="/pickups" class="button secondary">Back to Pickups</a>
+      <a href="/pickups" class="button secondary">Pickups</a>
       <a href="/dashboard" class="button secondary">Account</a>
       {% if user.role == 'admin' %}
         <a href="/admin/users" class="button secondary">Manage Users</a>
@@ -22,29 +22,39 @@
     <div class="alert {{ flash.category }}">{{ flash.message }}</div>
   {% endif %}
 
+  {% if can_edit %}
+  <section class="card">
+    <h2>Add Pallet</h2>
+    <form method="post" action="/pickups/{{ pickup_number }}/pallets/create" class="inline">
+      <label for="pallet_number">Pallet number</label>
+      <input type="number" id="pallet_number" name="pallet_number" min="1" required>
+      <button type="submit">Add Pallet</button>
+    </form>
+  </section>
+  {% endif %}
+
   <section class="table-card">
+    <h2>Pallets</h2>
     <table>
       <thead>
         <tr>
-          <th>#</th>
           <th>Pallet</th>
-          <th>Product ID</th>
-          <th>Quantity</th>
-          <th>Description</th>
+          <th>Items</th>
+          <th>Total Quantity</th>
+          <th>Last Update</th>
         </tr>
       </thead>
       <tbody>
-        {% for item in items %}
+        {% for pallet in pallets %}
           <tr>
-            <td>{{ loop.index }}</td>
-            <td>{{ item.COD_PALLET or '—' }}</td>
-            <td>{{ item.COD_ASSETS or item.get('COD_ASSETS_SQLITE') or '—' }}</td>
-            <td>{{ item.QUANTITY or 0 }}</td>
-            <td>{{ item.DESCRIPTION or '' }}</td>
+            <td><a href="/pickups/{{ pickup_number }}/pallets/{{ pallet.pallet }}">{{ pallet.pallet }}</a></td>
+            <td>{{ pallet.item_count or 0 }}</td>
+            <td>{{ pallet.total_quantity or 0 }}</td>
+            <td>{{ pallet.last_update or '—' }}</td>
           </tr>
         {% else %}
           <tr>
-            <td colspan="5" style="text-align:center;">No items recorded for this pickup yet.</td>
+            <td colspan="4" style="text-align:center;">No pallets defined yet.</td>
           </tr>
         {% endfor %}
       </tbody>
