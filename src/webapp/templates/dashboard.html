@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Dashboard</title>
+  <link rel="stylesheet" href="{{ url_for('static', path='/styles.css') }}">
+</head>
+<body>
+  <header class="app-header">
+    <h1>Welcome</h1>
+    <a href="/logout" class="button danger">Logout</a>
+  </header>
+
+  <section class="card">
+    <h2>Account</h2>
+    <dl>
+      <dt>User ID</dt>
+      <dd>{{ user.cod_usuario }}</dd>
+      <dt>Name</dt>
+      <dd>{{ user.usuario }}</dd>
+      <dt>Account Type</dt>
+      <dd>
+        {% if user.tipo == 1 %}
+          Admin <span class="badge">1</span>
+        {% else %}
+          Employee <span class="badge">{{ user.tipo }}</span>
+        {% endif %}
+      </dd>
+      <dt>Status</dt>
+      <dd>{{ "Active" if user.ativado else "Inactive" }}</dd>
+    </dl>
+  </section>
+</body>
+</html>
