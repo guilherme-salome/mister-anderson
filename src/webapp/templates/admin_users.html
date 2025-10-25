@@ -50,15 +50,8 @@
     <h2>Reset Password</h2>
     <p style="margin-bottom:1rem;">Choose an account and set a new password. Passwords must be at least 8 characters.</p>
     <form method="post" action="/admin/users/reset" class="inline">
-      <label for="target_user_id">User</label>
-      <select name="target_user_id" id="target_user_id" required>
-        <option value="" disabled selected>Select a user</option>
-        {% for u in users %}
-          {% if u.id != user.id %}
-            <option value="{{ u.id }}">{{ u.full_name }} ({{ u.username }})</option>
-          {% endif %}
-        {% endfor %}
-      </select>
+      <label for="target_username">Username</label>
+      <input type="text" id="target_username" name="target_username" placeholder="e.g. employee1" required autocomplete="username">
 
       <label for="new_password">New password</label>
       <input type="password" id="new_password" name="new_password" minlength="8" required autocomplete="new-password">

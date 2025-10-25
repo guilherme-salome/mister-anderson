@@ -150,6 +150,21 @@ def get_user(user_id: int) -> Optional[Dict[str, object]]:
         return dict(row) if row else None
 
 
+def get_user_by_username(username: str) -> Optional[Dict[str, object]]:
+    username = username.strip().lower()
+    with _connect() as conn:
+        cur = conn.execute(
+            """
+            SELECT id, username, full_name, role, is_active, created_at
+            FROM users
+            WHERE username = ?
+            """,
+            (username,),
+        )
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+
 def list_users() -> Iterable[Dict[str, object]]:
     with _connect() as conn:
         cur = conn.execute(

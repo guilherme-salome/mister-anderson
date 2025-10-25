@@ -10,7 +10,14 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
-from .db import authenticate, get_user, init_db, list_users, update_password
+from .db import (
+    authenticate,
+    get_user,
+    get_user_by_username,
+    init_db,
+    list_users,
+    update_password,
+)
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(
@@ -136,7 +143,7 @@ async def admin_users(request: Request):
 @app.post("/admin/users/reset", response_class=HTMLResponse)
 async def admin_reset_password(
     request: Request,
-    target_user_id: int = Form(...),
+    target_username: str = Form(...),
     new_password: str = Form(...),
     confirm_password: str = Form(...),
 ):
@@ -147,9 +154,9 @@ async def admin_reset_password(
         set_flash(request, "Administrator access required.", "error")
         return RedirectResponse(url="/dashboard", status_code=status.HTTP_302_FOUND)
 
-    target = get_user(target_user_id)
+    target = get_user_by_username(target_username)
     if not target:
-        set_flash(request, "Selected user does not exist.", "error")
+        set_flash(request, "User not found.", "error")
         return RedirectResponse(url="/admin/users", status_code=status.HTTP_302_FOUND)
 
     if len(new_password) < 8:
@@ -158,10 +165,6 @@ async def admin_reset_password(
 
     if new_password != confirm_password:
         set_flash(request, "Passwords do not match.", "error")
-        return RedirectResponse(url="/admin/users", status_code=status.HTTP_302_FOUND)
-
-    if target["id"] == user["id"]:
-        set_flash(request, "Use your profile page to change your own password.", "error")
         return RedirectResponse(url="/admin/users", status_code=status.HTTP_302_FOUND)
 
     update_password(target["id"], new_password)
