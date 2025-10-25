@@ -22,5 +22,5 @@ dd { margin: 4px 0 0 0; }
 table { width: 100%; border-collapse: collapse; }
 th, td { padding: 10px; border-bottom: 1px solid #e5e7eb; text-align: left; }
 th { background: #f1f5f9; font-weight: 600; }
-form.inline { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; }
-form.inline button { width: auto; padding: 10px 16px; }
+.inline { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; }
+.inline button { width: auto; padding: 10px 16px; }

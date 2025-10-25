@@ -2,6 +2,7 @@
 
 import logging
 import os
+import sqlite3
 from typing import Optional
 
 import uvicorn
@@ -11,12 +12,16 @@ from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
 from .db import (
+    ALLOWED_ROLES,
     authenticate,
+    create_user,
     get_user,
     get_user_by_username,
     init_db,
     list_users,
     update_password,
+    update_user_role,
+    update_user_status,
 )
 
 logger = logging.getLogger(__name__)
@@ -135,9 +140,118 @@ async def admin_users(request: Request):
         "request": request,
         "user": user,
         "users": list(list_users()),
+        "roles": ALLOWED_ROLES,
         "flash": consume_flash(request),
     }
     return templates.TemplateResponse("admin_users.html", ctx)
+
+
+def _require_admin(request: Request) -> Optional[RedirectResponse]:
+    user = current_user(request)
+    if not user:
+        return RedirectResponse(url="/", status_code=status.HTTP_302_FOUND)
+    if user["role"] != "admin":
+        set_flash(request, "Administrator access required.", "error")
+        return RedirectResponse(url="/dashboard", status_code=status.HTTP_302_FOUND)
+    return None
+
+
+@app.post("/admin/users/create", response_class=HTMLResponse)
+async def admin_create_user(
+    request: Request,
+    new_username: str = Form(...),
+    full_name: str = Form(...),
+    role: str = Form(...),
+    account_status: str = Form(...),
+    temp_password: str = Form(...),
+):
+    redirect_resp = _require_admin(request)
+    if redirect_resp:
+        return redirect_resp
+
+    username = new_username.strip().lower()
+    full_name = full_name.strip()
+    is_active = account_status == "active"
+
+    if len(username) < 3:
+        set_flash(request, "Username must be at least 3 characters.", "error")
+        return RedirectResponse(url="/admin/users", status_code=status.HTTP_302_FOUND)
+    if len(full_name) < 3:
+        set_flash(request, "Full name must be at least 3 characters.", "error")
+        return RedirectResponse(url="/admin/users", status_code=status.HTTP_302_FOUND)
+    if role not in ALLOWED_ROLES:
+        set_flash(request, "Invalid role.", "error")
+        return RedirectResponse(url="/admin/users", status_code=status.HTTP_302_FOUND)
+    if len(temp_password) < 8:
+        set_flash(request, "Password must be at least 8 characters.", "error")
+        return RedirectResponse(url="/admin/users", status_code=status.HTTP_302_FOUND)
+    if get_user_by_username(username):
+        set_flash(request, "Username already exists.", "error")
+        return RedirectResponse(url="/admin/users", status_code=status.HTTP_302_FOUND)
+
+    try:
+        create_user(
+            username=username,
+            full_name=full_name,
+            password=temp_password,
+            role=role,
+            is_active=is_active,
+        )
+    except sqlite3.IntegrityError:
+        set_flash(request, "Username already exists.", "error")
+    except ValueError as exc:
+        set_flash(request, str(exc), "error")
+    else:
+        logger.info("Admin created user %s (%s)", username, role)
+        set_flash(request, f"User {username} created.", "success")
+    return RedirectResponse(url="/admin/users", status_code=status.HTTP_302_FOUND)
+
+
+@app.post("/admin/users/status", response_class=HTMLResponse)
+async def admin_change_status(
+    request: Request,
+    target_user: str = Form(...),
+    new_status: int = Form(...),
+):
+    redirect_resp = _require_admin(request)
+    if redirect_resp:
+        return redirect_resp
+
+    target = get_user_by_username(target_user)
+    if not target:
+        set_flash(request, "User not found.", "error")
+        return RedirectResponse(url="/admin/users", status_code=status.HTTP_302_FOUND)
+
+    update_user_status(target["id"], is_active=bool(int(new_status)))
+    action = "activated" if int(new_status) else "deactivated"
+    set_flash(request, f"User {target['username']} {action}.", "success")
+    logger.info("Admin changed status for %s to %s", target["username"], action)
+    return RedirectResponse(url="/admin/users", status_code=status.HTTP_302_FOUND)
+
+
+@app.post("/admin/users/role", response_class=HTMLResponse)
+async def admin_change_role(
+    request: Request,
+    role_username: str = Form(...),
+    new_role: str = Form(...),
+):
+    redirect_resp = _require_admin(request)
+    if redirect_resp:
+        return redirect_resp
+
+    target = get_user_by_username(role_username)
+    if not target:
+        set_flash(request, "User not found.", "error")
+        return RedirectResponse(url="/admin/users", status_code=status.HTTP_302_FOUND)
+
+    if new_role not in ALLOWED_ROLES:
+        set_flash(request, "Invalid role selected.", "error")
+        return RedirectResponse(url="/admin/users", status_code=status.HTTP_302_FOUND)
+
+    update_user_role(target["id"], role=new_role)
+    set_flash(request, f"Role updated to {new_role} for {target['username']}.", "success")
+    logger.info("Admin changed role for %s to %s", target["username"], new_role)
+    return RedirectResponse(url="/admin/users", status_code=status.HTTP_302_FOUND)
 
 
 @app.post("/admin/users/reset", response_class=HTMLResponse)
@@ -147,12 +261,9 @@ async def admin_reset_password(
     new_password: str = Form(...),
     confirm_password: str = Form(...),
 ):
-    user = current_user(request)
-    if not user:
-        return RedirectResponse(url="/", status_code=status.HTTP_302_FOUND)
-    if user["role"] != "admin":
-        set_flash(request, "Administrator access required.", "error")
-        return RedirectResponse(url="/dashboard", status_code=status.HTTP_302_FOUND)
+    redirect_resp = _require_admin(request)
+    if redirect_resp:
+        return redirect_resp
 
     target = get_user_by_username(target_username)
     if not target:
@@ -168,7 +279,7 @@ async def admin_reset_password(
         return RedirectResponse(url="/admin/users", status_code=status.HTTP_302_FOUND)
 
     update_password(target["id"], new_password)
-    logger.info("Admin %s reset password for user %s", user["username"], target["username"])
+    logger.info("Admin %s reset password for user %s", current_user(request)["username"], target["username"])
     set_flash(request, f"Password updated for {target['username']}.", "success")
     return RedirectResponse(url="/admin/users", status_code=status.HTTP_302_FOUND)
 

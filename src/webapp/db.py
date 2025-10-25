@@ -186,3 +186,20 @@ def update_password(user_id: int, new_password: str) -> None:
             (password_hash, salt, user_id),
         )
         conn.commit()
+
+
+def update_user_status(user_id: int, *, is_active: bool) -> None:
+    with _connect() as conn:
+        conn.execute(
+            "UPDATE users SET is_active = ? WHERE id = ?",
+            (1 if is_active else 0, user_id),
+        )
+        conn.commit()
+
+
+def update_user_role(user_id: int, *, role: str) -> None:
+    if role not in ALLOWED_ROLES:
+        raise ValueError(f"Invalid role '{role}'. Allowed roles: {ALLOWED_ROLES}")
+    with _connect() as conn:
+        conn.execute("UPDATE users SET role = ? WHERE id = ?", (role, user_id))
+        conn.commit()
