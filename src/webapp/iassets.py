@@ -3,6 +3,7 @@
 import os
 import sqlite3
 from datetime import datetime
+import json
 from typing import Dict, Iterable, List, Optional, Tuple
 
 
@@ -37,6 +38,24 @@ def ensure_support_tables() -> None:
                 created_by TEXT,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(pickup_number, pallet_number)
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS local_products (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                pickup_number INTEGER NOT NULL,
+                pallet_number INTEGER NOT NULL,
+                quantity INTEGER NOT NULL,
+                serial_number TEXT,
+                short_description TEXT,
+                commodity TEXT,
+                destination TEXT,
+                description_raw TEXT,
+                photos TEXT,
+                created_by TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
             """
         )
@@ -206,11 +225,20 @@ def list_pallets(pickup_number: int) -> List[Dict[str, object]]:
 
         local = conn.execute(
             """
-            SELECT pallet_number AS pallet, created_at
-            FROM local_pallets
-            WHERE pickup_number = ?
+            SELECT lp.pallet_number AS pallet,
+                   lp.created_at,
+                   COALESCE(lp2.local_count, 0) AS local_count,
+                   COALESCE(lp2.local_qty, 0) AS local_qty
+            FROM local_pallets lp
+            LEFT JOIN (
+                SELECT pallet_number, COUNT(*) AS local_count, SUM(quantity) AS local_qty
+                FROM local_products
+                WHERE pickup_number = ?
+                GROUP BY pallet_number
+            ) lp2 ON lp2.pallet_number = lp.pallet_number
+            WHERE lp.pickup_number = ?
             """,
-            (pickup_number,),
+            (pickup_number, pickup_number),
         ).fetchall()
 
     pallets: Dict[int, Dict[str, object]] = {}
@@ -233,11 +261,13 @@ def list_pallets(pickup_number: int) -> List[Dict[str, object]]:
             # combines metadata if pallet also has IASSETS entries
             entry.setdefault("source", "mixed")
             entry.setdefault("created_at", row["created_at"])
+            entry["item_count"] += row["local_count"]
+            entry["total_quantity"] += row["local_qty"]
         else:
             pallets[pallet] = {
                 "pallet": pallet,
-                "item_count": 0,
-                "total_quantity": 0,
+                "item_count": row["local_count"] or 0,
+                "total_quantity": row["local_qty"] or 0,
                 "last_update": row["created_at"],
                 "source": "local",
             }
@@ -287,3 +317,102 @@ def fetch_pallet_items(pickup_number: int, pallet_number: int) -> List[Dict[str,
     with _connect() as conn:
         rows = conn.execute(query, (pickup_number, pallet_number)).fetchall()
     return [dict(row) for row in rows]
+
+
+def create_local_product(
+    *,
+    pickup_number: int,
+    pallet_number: int,
+    quantity: int,
+    serial_number: str,
+    short_description: str,
+    commodity: str,
+    destination: str,
+    description_raw: str,
+    photos: List[str],
+    created_by: Optional[str] = None,
+) -> int:
+    if quantity <= 0:
+        raise ValueError("Quantity must be greater than zero.")
+
+    with _connect() as conn:
+        cur = conn.execute(
+            """
+            INSERT INTO local_products (
+                pickup_number,
+                pallet_number,
+                quantity,
+                serial_number,
+                short_description,
+                commodity,
+                destination,
+                description_raw,
+                photos,
+                created_by,
+                created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                pickup_number,
+                pallet_number,
+                quantity,
+                serial_number,
+                short_description,
+                commodity,
+                destination,
+                description_raw,
+                json.dumps(photos),
+                created_by,
+                datetime.utcnow().isoformat(timespec="seconds"),
+            ),
+        )
+        conn.commit()
+        return int(cur.lastrowid)
+
+
+def list_local_products(pickup_number: int, pallet_number: int) -> List[Dict[str, object]]:
+    with _connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT id,
+                   quantity,
+                   serial_number,
+                   short_description,
+                   commodity,
+                   destination,
+                   description_raw,
+                   photos,
+                   created_by,
+                   created_at
+            FROM local_products
+            WHERE pickup_number = ? AND pallet_number = ?
+            ORDER BY created_at DESC
+            """,
+            (pickup_number, pallet_number),
+        ).fetchall()
+
+    result = []
+    for row in rows:
+        data = dict(row)
+        try:
+            data["photos"] = json.loads(data.get("photos") or "[]")
+        except json.JSONDecodeError:
+            data["photos"] = []
+        result.append(data)
+    return result
+    return result
+
+
+def update_local_product_photos(product_id: int, photos: List[str]) -> None:
+    with _connect() as conn:
+        conn.execute(
+            "UPDATE local_products SET photos = ? WHERE id = ?",
+            (json.dumps(photos), product_id),
+        )
+        conn.commit()
+
+
+def delete_local_product(product_id: int) -> None:
+    with _connect() as conn:
+        conn.execute("DELETE FROM local_products WHERE id = ?", (product_id,))
+        conn.commit()

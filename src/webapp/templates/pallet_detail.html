@@ -24,15 +24,32 @@
   {% endif %}
 
   <section class="card">
-    <p>This pallet currently has {{ items|length }} recorded item(s).</p>
+    <p>This pallet currently has {{ items|length }} IASSETS item(s) and {{ pending|length }} pending upload(s).</p>
     {% if can_edit %}
-      <p class="note">Product entry tools are under construction. For now, review existing items below.</p>
+      <p class="note">Add products by capturing photo(s). AI will fill the description automatically; you can adjust later.</p>
     {% else %}
-      <p class="note">This view is read-only.</p>
+      <p class="note">This view is read-only for your role.</p>
     {% endif %}
   </section>
 
+  {% if can_edit %}
+  <section class="card">
+    <h2>Add Product</h2>
+    <form method="post" action="/pickups/{{ pickup_number }}/pallets/{{ pallet_number }}/products" enctype="multipart/form-data" class="stacked">
+      <label for="quantity">Quantity</label>
+      <input type="number" id="quantity" name="quantity" min="1" value="1" required>
+
+      <label>Photos</label>
+      <input type="file" name="photos" accept="image/*" capture="environment" required>
+      <input type="file" name="photos" accept="image/*">
+
+      <button type="submit">Capture Product</button>
+    </form>
+  </section>
+  {% endif %}
+
   <section class="table-card">
+    <h2>IASSETS Entries</h2>
     <table>
       <thead>
         <tr>
@@ -58,7 +75,43 @@
           </tr>
         {% else %}
           <tr>
-            <td colspan="7" style="text-align:center;">No products recorded for this pallet yet.</td>
+            <td colspan="7" style="text-align:center;">No products recorded in IASSETS for this pallet yet.</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+
+  <section class="table-card">
+    <h2>Pending Products</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Quantity</th>
+          <th>Serial</th>
+          <th>Short Description</th>
+          <th>Commodity</th>
+          <th>Destination</th>
+          <th>Photos</th>
+          <th>Created</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in pending %}
+          <tr>
+            <td>{{ item.id }}</td>
+            <td>{{ item.quantity }}</td>
+            <td>{{ item.serial_number or '—' }}</td>
+            <td>{{ item.short_description or '' }}</td>
+            <td>{{ item.commodity or '' }}</td>
+            <td>{{ item.destination or '' }}</td>
+            <td>{{ item.photos|length }}</td>
+            <td>{{ item.created_at }}</td>
+          </tr>
+        {% else %}
+          <tr>
+            <td colspan="8" style="text-align:center;">No pending products captured yet.</td>
           </tr>
         {% endfor %}
       </tbody>
