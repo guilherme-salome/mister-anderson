@@ -84,7 +84,7 @@
 
   <section class="table-card">
     <h2>Pending Products</h2>
-    <table>
+    <table id="pending-products">
       <thead>
         <tr>
           <th>ID</th>
@@ -99,13 +99,13 @@
       </thead>
       <tbody>
         {% for item in pending %}
-          <tr>
+          <tr data-product-id="{{ item.id }}">
             <td>{{ item.id }}</td>
-            <td>{{ item.quantity }}</td>
-            <td>{{ item.serial_number or '—' }}</td>
-            <td>{{ item.short_description or '' }}</td>
-            <td>{{ item.commodity or '' }}</td>
-            <td>{{ item.destination or '' }}</td>
+            <td class="editable" data-field="quantity">{{ item.quantity }}</td>
+            <td class="editable" data-field="serial_number">{{ item.serial_number or '—' }}</td>
+            <td class="editable" data-field="short_description">{{ item.short_description or '' }}</td>
+            <td class="editable" data-field="commodity">{{ item.commodity or '' }}</td>
+            <td class="editable" data-field="destination">{{ item.destination or '' }}</td>
             <td>{{ item.photos|length }}</td>
             <td>{{ item.created_at }}</td>
           </tr>
@@ -117,5 +117,82 @@
       </tbody>
     </table>
   </section>
+
+  {% if can_edit %}
+  <script>
+    (() => {
+      const table = document.getElementById('pending-products');
+      if (!table) return;
+      const pickupNumber = {{ pickup_number }};
+      const palletNumber = {{ pallet_number }};
+
+      table.addEventListener('click', (event) => {
+        const cell = event.target.closest('.editable');
+        if (!cell || cell.dataset.editing === '1') return;
+        const row = cell.closest('tr');
+        if (!row) return;
+        const productId = row.dataset.productId;
+        const field = cell.dataset.field;
+        if (!productId || !field) return;
+
+        const originalText = cell.textContent.trim();
+        const isQuantity = field === 'quantity';
+        const input = document.createElement('input');
+        input.type = isQuantity ? 'number' : 'text';
+        if (isQuantity) input.min = '1';
+        input.value = originalText === '—' ? '' : originalText;
+
+        cell.dataset.editing = '1';
+        cell.textContent = '';
+        cell.appendChild(input);
+        input.focus();
+        input.select();
+
+        const commit = async () => {
+          const value = input.value.trim();
+          try {
+            const response = await fetch(
+              `/pickups/${pickupNumber}/pallets/${palletNumber}/products/${productId}/update`,
+              {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Accept': 'application/json',
+                },
+                credentials: 'same-origin',
+                body: JSON.stringify({ field, value }),
+              }
+            );
+            const data = await response.json();
+            console.debug('Update response', response.status, data);
+            if (!response.ok || data.status !== 'ok') {
+            alert(data.message || 'Unable to save change.');
+            cell.textContent = originalText;
+          } else {
+            cell.textContent = data.value || '—';
+            }
+          } catch (error) {
+            console.error(error);
+            alert('Network error while saving change.');
+            cell.textContent = originalText;
+          } finally {
+            cell.dataset.editing = '0';
+          }
+        };
+
+        input.addEventListener('blur', commit);
+        input.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            input.blur();
+          } else if (e.key === 'Escape') {
+            cell.textContent = originalText;
+            cell.dataset.editing = '0';
+          }
+        });
+      });
+    })();
+  </script>
+  {% endif %}
 </body>
 </html>

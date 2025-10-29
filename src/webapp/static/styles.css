@@ -29,6 +29,7 @@ th { background: #f1f5f9; font-weight: 600; }
 .stacked input, .stacked select, .stacked textarea { width: 100%; }
 .stacked small { color: #64748b; }
 .stacked button { width: auto; align-self: flex-start; padding: 10px 16px; }
+.editable { cursor: pointer; }
 .pagination { margin-top: 1.5rem; display: flex; justify-content: center; align-items: center; gap: 1rem; }
 .page-info { font-weight: 600; color: #475569; }
 .note { color: #475569; }

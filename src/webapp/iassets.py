@@ -400,6 +400,58 @@ def list_local_products(pickup_number: int, pallet_number: int) -> List[Dict[str
             data["photos"] = []
         result.append(data)
     return result
+
+
+_EDITABLE_PRODUCT_FIELDS = {
+    "quantity": int,
+    "serial_number": str,
+    "short_description": str,
+    "commodity": str,
+    "destination": str,
+}
+
+
+def update_local_product_field(
+    *,
+    product_id: int,
+    pickup_number: int,
+    pallet_number: int,
+    field: str,
+    raw_value: str,
+) -> str:
+    if field not in _EDITABLE_PRODUCT_FIELDS:
+        raise ValueError("Field is not editable.")
+
+    with _connect() as conn:
+        cur = conn.execute(
+            """
+            SELECT id FROM local_products
+            WHERE id = ? AND pickup_number = ? AND pallet_number = ?
+            """,
+            (product_id, pickup_number, pallet_number),
+        )
+        if not cur.fetchone():
+            raise ValueError("Product not found.")
+
+    converter = _EDITABLE_PRODUCT_FIELDS[field]
+    if converter is int:
+        try:
+            value = int(raw_value)
+        except (TypeError, ValueError):
+            raise ValueError("Quantity must be a positive integer.")
+        if value <= 0:
+            raise ValueError("Quantity must be a positive integer.")
+    else:
+        value = (raw_value or "").strip()
+
+    with _connect() as conn:
+        conn.execute(
+            f"UPDATE local_products SET {field} = ? WHERE id = ?",
+            (value, product_id),
+        )
+        conn.commit()
+
+    return str(value)
     return result
 
 

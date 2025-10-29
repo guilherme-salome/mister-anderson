@@ -9,9 +9,11 @@ from pathlib import Path
 from typing import Iterable, Optional, List
 from uuid import uuid4
 
+from pydantic import BaseModel
+
 import uvicorn
 from fastapi import FastAPI, Form, Request, status, UploadFile, File
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
@@ -28,7 +30,12 @@ from .db import (
     update_user_status,
 )
 from . import iassets
-from .iassets import DATA_DIR, update_local_product_photos, delete_local_product
+from .iassets import (
+    DATA_DIR,
+    update_local_product_photos,
+    delete_local_product,
+    update_local_product_field,
+)
 from ..product import Product
 from ..llm import process_product_folder
 
@@ -50,6 +57,11 @@ app.add_middleware(
 
 PRODUCT_UPLOAD_DIR = Path(DATA_DIR) / "product_uploads"
 PRODUCT_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+
+class ProductFieldUpdate(BaseModel):
+    field: str
+    value: str = ""
 
 if os.path.isdir(os.path.join(TEMPLATES_DIR, "..", "static")):
     from fastapi.staticfiles import StaticFiles
@@ -405,6 +417,52 @@ async def create_product_route(
         url=f"/pickups/{pickup_number}/pallets/{pallet_number}",
         status_code=status.HTTP_302_FOUND,
     )
+
+
+@app.post(
+    "/pickups/{pickup_number}/pallets/{pallet_number}/products/{product_id}/update",
+    response_class=JSONResponse,
+)
+async def update_product_field_route(
+    request: Request,
+    pickup_number: int,
+    pallet_number: int,
+    product_id: int,
+    update: ProductFieldUpdate,
+):
+    user, redirect_resp = ensure_access(request, allowed_roles=("employee", "supervisor", "admin"))
+    if redirect_resp:
+        return JSONResponse({"status": "error", "message": "Unauthorized."}, status_code=403)
+
+    try:
+        new_value = update_local_product_field(
+            product_id=product_id,
+            pickup_number=pickup_number,
+            pallet_number=pallet_number,
+            field=update.field,
+            raw_value=update.value,
+        )
+    except ValueError as exc:
+        logger.warning(
+            "Failed to update product %s (pickup %s pallet %s field %s): %s",
+            product_id,
+            pickup_number,
+            pallet_number,
+            update.field,
+            exc,
+        )
+        return JSONResponse({"status": "error", "message": str(exc)}, status_code=400)
+    except Exception:
+        logger.exception(
+            "Unexpected error updating product %s (pickup %s pallet %s field %s)",
+            product_id,
+            pickup_number,
+            pallet_number,
+            update.field,
+        )
+        return JSONResponse({"status": "error", "message": "Server error."}, status_code=500)
+
+    return JSONResponse({"status": "ok", "value": new_value})
 
 
 @app.get("/pickups/{pickup_number}/pallets/{pallet_number}", response_class=HTMLResponse)
