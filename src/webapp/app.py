@@ -277,7 +277,7 @@ async def create_product_route(
     pickup_number: int,
     pallet_number: int,
     quantity: int = Form(...),
-    photos: List[UploadFile] = File(...),
+    photos: Optional[List[UploadFile]] = File(None),
 ):
     user, redirect_resp = ensure_access(request, allowed_roles=("employee", "supervisor", "admin"))
     if redirect_resp:
@@ -290,13 +290,8 @@ async def create_product_route(
             status_code=status.HTTP_302_FOUND,
         )
 
-    valid_files = [upload for upload in photos if upload and upload.filename]
-    if not valid_files:
-        set_flash(request, "Please capture or upload at least one product photo.", "error")
-        return RedirectResponse(
-            url=f"/pickups/{pickup_number}/pallets/{pallet_number}",
-            status_code=status.HTTP_302_FOUND,
-        )
+    valid_files = [upload for upload in (photos or []) if upload and upload.filename]
+    has_photos = bool(valid_files)
 
     product = Product(created_by=user["username"])
     product.quantity = quantity
@@ -304,40 +299,45 @@ async def create_product_route(
 
     base_dir = PRODUCT_UPLOAD_DIR / f"pickup_{pickup_number}" / f"pallet_{pallet_number}"
     staging_dir = base_dir / f"pending_{uuid4().hex}"
-    staging_dir.mkdir(parents=True, exist_ok=True)
+    if has_photos:
+        staging_dir.mkdir(parents=True, exist_ok=True)
 
     saved_files: List[str] = []
     product_id = None
     try:
-        for upload in valid_files:
-            contents = await upload.read()
-            suffix = Path(upload.filename).suffix or ".jpg"
-            filename = f"{uuid4().hex}{suffix}"
-            temp_path = Path(product.tempdir) / filename
-            with open(temp_path, "wb") as temp_file:
-                temp_file.write(contents)
+        if has_photos:
+            for upload in valid_files:
+                contents = await upload.read()
+                suffix = Path(upload.filename).suffix or ".jpg"
+                filename = f"{uuid4().hex}{suffix}"
+                temp_path = Path(product.tempdir) / filename
+                with open(temp_path, "wb") as temp_file:
+                    temp_file.write(contents)
 
-            dest_path = staging_dir / filename
-            with open(dest_path, "wb") as dest_file:
-                dest_file.write(contents)
-            saved_files.append(filename)
+                dest_path = staging_dir / filename
+                with open(dest_path, "wb") as dest_file:
+                    dest_file.write(contents)
+                saved_files.append(filename)
 
-        if not saved_files:
-            set_flash(request, "Images could not be processed. Please retry.", "error")
-            return RedirectResponse(
-                url=f"/pickups/{pickup_number}/pallets/{pallet_number}",
-                status_code=status.HTTP_302_FOUND,
-            )
+            if not saved_files:
+                set_flash(request, "Images could not be processed. Please retry.", "error")
+                return RedirectResponse(
+                    url=f"/pickups/{pickup_number}/pallets/{pallet_number}",
+                    status_code=status.HTTP_302_FOUND,
+                )
 
-        try:
-            await process_product_folder(product)
-        except Exception as exc:
-            logger.exception("Failed to process product images with LLM: %s", exc)
-            set_flash(
-                request,
-                "Images uploaded, but automatic description failed. Please edit manually when available.",
-                "error",
-            )
+            try:
+                await process_product_folder(product)
+            except Exception as exc:
+                logger.exception("Failed to process product images with LLM: %s", exc)
+                set_flash(
+                    request,
+                    "Images uploaded, but automatic description failed. Please edit manually when available.",
+                    "error",
+                )
+        else:
+            product.description_json = {}
+            product.description_raw = ""
 
         data = product.description_json or {}
         serial_number = data.get("serial_number", "")
@@ -365,13 +365,17 @@ async def create_product_route(
         final_dir.parent.mkdir(parents=True, exist_ok=True)
         if final_dir.exists():
             shutil.rmtree(final_dir)
-        staging_dir.rename(final_dir)
 
-        final_photo_paths: List[str] = []
-        for filename in saved_files:
-            photo_path = final_dir / filename
-            if photo_path.exists():
-                final_photo_paths.append(str(photo_path.relative_to(DATA_DIR)))
+        if has_photos:
+            staging_dir.rename(final_dir)
+            final_photo_paths: List[str] = []
+            for filename in saved_files:
+                photo_path = final_dir / filename
+                if photo_path.exists():
+                    final_photo_paths.append(str(photo_path.relative_to(DATA_DIR)))
+        else:
+            final_dir.mkdir(parents=True, exist_ok=True)
+            final_photo_paths = []
 
         update_local_product_photos(product_id, final_photo_paths)
 
@@ -398,6 +402,8 @@ async def create_product_route(
         message = f"Product captured (#{product_id})"
         if short_description:
             message += f": {short_description}"
+        elif has_photos:
+            message += ". AI description pending."
         set_flash(request, message, "success")
     except Exception as exc:
         logger.exception("Failed to capture product for pickup %s pallet %s", pickup_number, pallet_number)
@@ -409,7 +415,7 @@ async def create_product_route(
             product.clean_tempdir()
         except Exception:
             pass
-        if staging_dir.exists():
+        if has_photos and staging_dir.exists():
             shutil.rmtree(staging_dir, ignore_errors=True)
         if product_id is None and base_dir.exists() and not any(base_dir.iterdir()):
             shutil.rmtree(base_dir, ignore_errors=True)
