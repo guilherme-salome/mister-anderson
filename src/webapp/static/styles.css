@@ -33,3 +33,4 @@ th { background: #f1f5f9; font-weight: 600; }
 .pagination { margin-top: 1.5rem; display: flex; justify-content: center; align-items: center; gap: 1rem; }
 .page-info { font-weight: 600; color: #475569; }
 .note { color: #475569; }
+.sync-footer { margin-top: 2rem; display: flex; justify-content: center; }

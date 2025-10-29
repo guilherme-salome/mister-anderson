@@ -35,6 +35,7 @@ from .iassets import (
     update_local_product_photos,
     delete_local_product,
     update_local_product_field,
+    sync_local_products_to_iassets,
 )
 from ..product import Product
 from ..llm import process_product_folder
@@ -463,6 +464,30 @@ async def update_product_field_route(
         return JSONResponse({"status": "error", "message": "Server error."}, status_code=500)
 
     return JSONResponse({"status": "ok", "value": new_value})
+
+
+@app.post(
+    "/pickups/{pickup_number}/pallets/{pallet_number}/sync",
+    response_class=JSONResponse,
+)
+async def sync_products_route(
+    request: Request,
+    pickup_number: int,
+    pallet_number: int,
+):
+    user, redirect_resp = ensure_access(request, allowed_roles=("employee", "supervisor", "admin"))
+    if redirect_resp:
+        return JSONResponse({"status": "error", "message": "Unauthorized."}, status_code=403)
+
+    try:
+        synced = sync_local_products_to_iassets(pickup_number, pallet_number)
+    except Exception:
+        logger.exception(
+            "Failed to sync local products for pickup %s pallet %s", pickup_number, pallet_number
+        )
+        return JSONResponse({"status": "error", "message": "Sync failed."}, status_code=500)
+
+    return JSONResponse({"status": "ok", "synced": synced})
 
 
 @app.get("/pickups/{pickup_number}/pallets/{pallet_number}", response_class=HTMLResponse)

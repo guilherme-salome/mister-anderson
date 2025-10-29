@@ -82,6 +82,12 @@
     </table>
   </section>
 
+  {% if can_edit %}
+  <div class="sync-footer">
+    <button type="button" id="sync-button" class="button secondary">Finalize &amp; Sync</button>
+  </div>
+  {% endif %}
+
   <section class="table-card">
     <h2>Pending Products</h2>
     <table id="pending-products">
@@ -122,9 +128,12 @@
   <script>
     (() => {
       const table = document.getElementById('pending-products');
-      if (!table) return;
       const pickupNumber = {{ pickup_number }};
       const palletNumber = {{ pallet_number }};
+      const syncUrl = `/pickups/${pickupNumber}/pallets/${palletNumber}/sync`;
+      const hasPending = () => table && table.querySelectorAll('tbody tr[data-product-id]').length > 0;
+
+      if (!table) return;
 
       table.addEventListener('click', (event) => {
         const cell = event.target.closest('.editable');
@@ -166,8 +175,8 @@
             const data = await response.json();
             console.debug('Update response', response.status, data);
             if (!response.ok || data.status !== 'ok') {
-            alert(data.message || 'Unable to save change.');
-            cell.textContent = originalText;
+              alert(data.message || 'Unable to save change.');
+              cell.textContent = originalText;
           } else {
             cell.textContent = data.value || '—';
             }
@@ -191,6 +200,44 @@
           }
         });
       });
+
+      const triggerSync = async (showFeedback = false) => {
+        if (!hasPending()) {
+          if (showFeedback) alert('No pending products to sync.');
+          return;
+        }
+        try {
+          const response = await fetch(syncUrl, {
+            method: 'POST',
+            headers: { 'Accept': 'application/json' },
+            credentials: 'same-origin',
+          });
+          const data = await response.json();
+          console.debug('Sync response', response.status, data);
+          if (!response.ok || data.status !== 'ok') {
+            if (showFeedback) alert(data.message || 'Sync failed.');
+            return;
+          }
+          if (showFeedback) alert(`Synced ${data.synced} product(s).`);
+          window.location.reload();
+        } catch (error) {
+          console.error(error);
+          if (showFeedback) alert('Network error while syncing.');
+        }
+      };
+
+      const syncButton = document.getElementById('sync-button');
+      if (syncButton) {
+        syncButton.addEventListener('click', () => triggerSync(true));
+      }
+
+      const sendBeaconSync = () => {
+        if (!hasPending() || !navigator.sendBeacon) return;
+        const blob = new Blob(['{}'], { type: 'application/json' });
+        navigator.sendBeacon(syncUrl, blob);
+      };
+
+      window.addEventListener('pagehide', sendBeaconSync);
     })();
   </script>
   {% endif %}

@@ -452,6 +452,63 @@ def update_local_product_field(
         conn.commit()
 
     return str(value)
+
+
+def sync_local_products_to_iassets(
+    pickup_number: int,
+    pallet_number: int,
+) -> int:
+    with _connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT id, quantity, serial_number, short_description, commodity, destination, description_raw
+            FROM local_products
+            WHERE pickup_number = ? AND pallet_number = ?
+            ORDER BY created_at
+            """,
+            (pickup_number, pallet_number),
+        ).fetchall()
+
+        if not rows:
+            return 0
+
+        insert_sql = (
+            """
+            INSERT INTO IASSETS (
+                PICKUP_NUMBER,
+                COD_PALLET,
+                QUANTITY,
+                DESCRIPTION,
+                SN,
+                COD_ASSETS_SQLITE
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """
+        )
+
+        for row in rows:
+            description = row["short_description"] or row["description_raw"] or ""
+            serial = row["serial_number"] or None
+            conn.execute(
+                insert_sql,
+                (
+                    pickup_number,
+                    pallet_number,
+                    row["quantity"],
+                    description,
+                    serial,
+                    row["id"],
+                ),
+            )
+
+        ids = [row["id"] for row in rows]
+        placeholders = ",".join("?" for _ in ids)
+        conn.execute(
+            f"DELETE FROM local_products WHERE id IN ({placeholders})",
+            ids,
+        )
+        conn.commit()
+
+    return len(rows)
     return result
 
 
