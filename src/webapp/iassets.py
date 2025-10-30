@@ -454,6 +454,57 @@ def update_local_product_field(
     return str(value)
 
 
+_EDITABLE_IASSETS_FIELDS = {
+    "SN": str,
+    "ASSET_TAG": str,
+    "DESCRIPTION": str,
+    "QUANTITY": int,
+}
+
+
+def update_iassets_field(
+    *,
+    row_id: int,
+    pickup_number: int,
+    pallet_number: int,
+    field: str,
+    raw_value: str,
+) -> str:
+    if field not in _EDITABLE_IASSETS_FIELDS:
+        raise ValueError("Field is not editable.")
+
+    converter = _EDITABLE_IASSETS_FIELDS[field]
+    if converter is int:
+        try:
+            value = int(raw_value)
+        except (TypeError, ValueError):
+            raise ValueError("Quantity must be a positive integer.")
+        if value <= 0:
+            raise ValueError("Quantity must be a positive integer.")
+    else:
+        value = (raw_value or "").strip()
+
+    with _connect() as conn:
+        cur = conn.execute(
+            """
+            SELECT ROWID FROM IASSETS
+            WHERE ROWID = ? AND PICKUP_NUMBER = ? AND COALESCE(COD_PALLET, 0) = ?
+            LIMIT 1
+            """,
+            (row_id, pickup_number, pallet_number),
+        )
+        if not cur.fetchone():
+            raise ValueError("IASSETS entry not found.")
+
+        conn.execute(
+            f"UPDATE IASSETS SET {field} = ? WHERE ROWID = ?",
+            (value, row_id),
+        )
+        conn.commit()
+
+    return str(value)
+
+
 def sync_local_products_to_iassets(
     pickup_number: int,
     pallet_number: int,
