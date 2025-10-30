@@ -398,16 +398,27 @@ def list_local_products(pickup_number: int, pallet_number: int) -> List[Dict[str
             data["photos"] = json.loads(data.get("photos") or "[]")
         except json.JSONDecodeError:
             data["photos"] = []
+        data["COD_ASSETS"] = None
+        data["COD_ASSETS_SQLITE"] = row["id"]
+        data["SN"] = row["serial_number"] or ""
+        data["DESCRIPTION"] = row["short_description"] or row["description_raw"] or ""
+        data["QUANTITY"] = row["quantity"]
+        data.setdefault("ASSET_TAG", "")
         result.append(data)
     return result
 
 
-_EDITABLE_PRODUCT_FIELDS = {
+_BASE_LOCAL_FIELDS = {
     "quantity": int,
     "serial_number": str,
     "short_description": str,
     "commodity": str,
     "destination": str,
+}
+
+_EDITABLE_PRODUCT_FIELDS = {
+    **_BASE_LOCAL_FIELDS,
+    **{key.upper(): value for key, value in _BASE_LOCAL_FIELDS.items()},
 }
 
 
@@ -419,7 +430,8 @@ def update_local_product_field(
     field: str,
     raw_value: str,
 ) -> str:
-    if field not in _EDITABLE_PRODUCT_FIELDS:
+    normalized = field.lower()
+    if normalized not in _BASE_LOCAL_FIELDS:
         raise ValueError("Field is not editable.")
 
     with _connect() as conn:
@@ -433,7 +445,7 @@ def update_local_product_field(
         if not cur.fetchone():
             raise ValueError("Product not found.")
 
-    converter = _EDITABLE_PRODUCT_FIELDS[field]
+    converter = _BASE_LOCAL_FIELDS[normalized]
     if converter is int:
         try:
             value = int(raw_value)
@@ -446,7 +458,7 @@ def update_local_product_field(
 
     with _connect() as conn:
         conn.execute(
-            f"UPDATE local_products SET {field} = ? WHERE id = ?",
+            f"UPDATE local_products SET {normalized} = ? WHERE id = ?",
             (value, product_id),
         )
         conn.commit()

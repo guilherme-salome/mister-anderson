@@ -45,12 +45,12 @@
       <thead>
         <tr>
           <th>#</th>
-          <th>Product ID</th>
-          <th>Webapp ID</th>
-          <th>Serial</th>
-          <th>Asset Tag</th>
-          <th>Quantity</th>
-          <th>Description</th>
+          <th>COD_ASSETS</th>
+          <th>COD_ASSETS_SQLITE</th>
+          <th>SN</th>
+          <th>ASSET_TAG</th>
+          <th>QUANTITY</th>
+          <th>DESCRIPTION</th>
         </tr>
       </thead>
       <tbody>
@@ -84,31 +84,27 @@
     <table id="pending-products">
       <thead>
         <tr>
-          <th>ID</th>
-          <th>Quantity</th>
-          <th>Serial</th>
-          <th>Short Description</th>
-          <th>Commodity</th>
-          <th>Destination</th>
-          <th>Photos</th>
-          <th>Created</th>
+          <th>COD_ASSETS_SQLITE</th>
+          <th>QUANTITY</th>
+          <th>SN</th>
+          <th>DESCRIPTION</th>
+          <th>PHOTOS</th>
+          <th>CREATED_AT</th>
         </tr>
       </thead>
       <tbody>
         {% for item in pending %}
           <tr data-product-id="{{ item.id }}">
-            <td>{{ item.id }}</td>
-            <td class="editable" data-field="quantity">{{ item.quantity }}</td>
-            <td class="editable" data-field="serial_number">{{ item.serial_number or '—' }}</td>
-            <td class="editable" data-field="short_description">{{ item.short_description or '' }}</td>
-            <td class="editable" data-field="commodity">{{ item.commodity or '' }}</td>
-            <td class="editable" data-field="destination">{{ item.destination or '' }}</td>
+            <td>{{ item.COD_ASSETS_SQLITE }}</td>
+            <td class="editable" data-field="quantity">{{ item.QUANTITY }}</td>
+            <td class="editable" data-field="serial_number">{{ item.SN or '—' }}</td>
+            <td class="editable" data-field="short_description">{{ item.DESCRIPTION }}</td>
             <td>{{ item.photos|length }}</td>
             <td>{{ item.created_at }}</td>
           </tr>
         {% else %}
           <tr>
-            <td colspan="8" style="text-align:center;">No pending products captured yet.</td>
+            <td colspan="6" style="text-align:center;">No pending products captured yet.</td>
           </tr>
         {% endfor %}
       </tbody>
