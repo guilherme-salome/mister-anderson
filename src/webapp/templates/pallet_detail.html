@@ -23,15 +23,6 @@
     <div class="alert {{ flash.category }}">{{ flash.message }}</div>
   {% endif %}
 
-  <section class="card">
-    <p>This pallet currently has {{ items|length }} IASSETS item(s) and {{ pending|length }} pending upload(s).</p>
-    {% if can_edit %}
-      <p class="note">Add products by capturing photo(s). AI will fill the description automatically; you can adjust later.</p>
-    {% else %}
-      <p class="note">This view is read-only for your role.</p>
-    {% endif %}
-  </section>
-
   {% if can_edit %}
   <section class="card">
     <h2>Add Product</h2>
