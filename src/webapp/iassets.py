@@ -135,7 +135,6 @@ def list_pickups(
             agg AS (
                 SELECT
                     pickup_number,
-                    COUNT(*) AS item_count,
                     SUM(COALESCE(quantity, 0)) AS total_quantity,
                     MAX(COALESCE(dt_update, dt, dt_processed, dt_pickup)) AS last_update
                 FROM IASSETS
@@ -143,10 +142,9 @@ def list_pickups(
                 GROUP BY pickup_number
             )
             SELECT
-                c.pickup_number AS pickup,
-                COALESCE(agg.item_count, 0) AS item_count,
-                COALESCE(agg.total_quantity, 0) AS total_quantity,
-                COALESCE(agg.last_update, lp.created_at) AS last_update
+                c.pickup_number AS PICKUP_NUMBER,
+                COALESCE(agg.total_quantity, 0) AS QUANTITY,
+                COALESCE(agg.last_update, lp.created_at) AS DT_UPDATE
             FROM combined c
             LEFT JOIN agg ON agg.pickup_number = c.pickup_number
             LEFT JOIN local_pickups lp ON lp.pickup_number = c.pickup_number
@@ -212,10 +210,9 @@ def list_pallets(pickup_number: int) -> List[Dict[str, object]]:
         aggregated = conn.execute(
             """
             SELECT
-                COD_PALLET AS pallet,
-                COUNT(*) AS item_count,
-                SUM(COALESCE(quantity, 0)) AS total_quantity,
-                MAX(COALESCE(dt_update, dt, dt_processed, dt_pickup)) AS last_update
+                COD_PALLET AS COD_PALLET,
+                SUM(COALESCE(quantity, 0)) AS QUANTITY,
+                MAX(COALESCE(dt_update, dt, dt_processed, dt_pickup)) AS DT_UPDATE
             FROM IASSETS
             WHERE pickup_number = ? AND COD_PALLET IS NOT NULL
             GROUP BY COD_PALLET
@@ -225,13 +222,15 @@ def list_pallets(pickup_number: int) -> List[Dict[str, object]]:
 
         local = conn.execute(
             """
-            SELECT lp.pallet_number AS pallet,
+            SELECT lp.pallet_number AS COD_PALLET,
                    lp.created_at,
-                   COALESCE(lp2.local_count, 0) AS local_count,
-                   COALESCE(lp2.local_qty, 0) AS local_qty
+                   COALESCE(lp2.local_qty, 0) AS local_qty,
+                   COALESCE(lp2.local_dt, lp.created_at) AS local_dt
             FROM local_pallets lp
             LEFT JOIN (
-                SELECT pallet_number, COUNT(*) AS local_count, SUM(quantity) AS local_qty
+                SELECT pallet_number,
+                       SUM(quantity) AS local_qty,
+                       MAX(created_at) AS local_dt
                 FROM local_products
                 WHERE pickup_number = ?
                 GROUP BY pallet_number
@@ -243,36 +242,37 @@ def list_pallets(pickup_number: int) -> List[Dict[str, object]]:
 
     pallets: Dict[int, Dict[str, object]] = {}
     for row in aggregated:
-        pallet = row["pallet"]
+        pallet = row["COD_PALLET"]
         if pallet is None:
             continue
         pallets[pallet] = {
-            "pallet": pallet,
-            "item_count": row["item_count"] or 0,
-            "total_quantity": row["total_quantity"] or 0,
-            "last_update": row["last_update"],
+            "COD_PALLET": pallet,
+            "QUANTITY": row["QUANTITY"] or 0,
+            "DT_UPDATE": row["DT_UPDATE"],
             "source": "iassets",
         }
 
     for row in local:
-        pallet = row["pallet"]
+        pallet = row["COD_PALLET"]
         entry = pallets.get(pallet)
         if entry:
-            # combines metadata if pallet also has IASSETS entries
             entry.setdefault("source", "mixed")
             entry.setdefault("created_at", row["created_at"])
-            entry["item_count"] += row["local_count"]
-            entry["total_quantity"] += row["local_qty"]
+            entry["QUANTITY"] = (entry.get("QUANTITY") or 0) + (row["local_qty"] or 0)
+            local_dt = row["local_dt"]
+            if local_dt:
+                current_dt = entry.get("DT_UPDATE")
+                if not current_dt or local_dt > current_dt:
+                    entry["DT_UPDATE"] = local_dt
         else:
             pallets[pallet] = {
-                "pallet": pallet,
-                "item_count": row["local_count"] or 0,
-                "total_quantity": row["local_qty"] or 0,
-                "last_update": row["created_at"],
+                "COD_PALLET": pallet,
+                "QUANTITY": row["local_qty"] or 0,
+                "DT_UPDATE": row["local_dt"],
                 "source": "local",
             }
 
-    ordered = sorted(pallets.values(), key=lambda p: p["pallet"])
+    ordered = sorted(pallets.values(), key=lambda p: p["COD_PALLET"])
     return ordered
 
 

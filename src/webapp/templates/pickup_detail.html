@@ -38,23 +38,21 @@
     <table>
       <thead>
         <tr>
-          <th>Pallet</th>
-          <th>Items</th>
-          <th>Total Quantity</th>
-          <th>Last Update</th>
+          <th>COD_PALLET</th>
+          <th>QUANTITY</th>
+          <th>DT_UPDATE</th>
         </tr>
       </thead>
       <tbody>
         {% for pallet in pallets %}
           <tr>
-            <td><a href="/pickups/{{ pickup_number }}/pallets/{{ pallet.pallet }}">{{ pallet.pallet }}</a></td>
-            <td>{{ pallet.item_count or 0 }}</td>
-            <td>{{ pallet.total_quantity or 0 }}</td>
-            <td>{{ pallet.last_update or '—' }}</td>
+            <td><a href="/pickups/{{ pickup_number }}/pallets/{{ pallet.COD_PALLET }}">{{ pallet.COD_PALLET }}</a></td>
+            <td>{{ pallet.QUANTITY or 0 }}</td>
+            <td>{{ pallet.DT_UPDATE or '—' }}</td>
           </tr>
         {% else %}
           <tr>
-            <td colspan="4" style="text-align:center;">No pallets defined yet.</td>
+            <td colspan="3" style="text-align:center;">No pallets defined yet.</td>
           </tr>
         {% endfor %}
       </tbody>
