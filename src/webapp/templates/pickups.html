@@ -32,14 +32,9 @@
         <a href="/pickups" class="button secondary" style="padding:10px 16px;">Clear</a>
       {% endif %}
     </form>
-    {% if user.role in ['employee', 'admin'] %}
-      <hr style="margin:1.5rem 0; border:none; border-top:1px solid #e2e8f0;">
-      <form method="post" action="/pickups/create" class="inline">
-        <label for="new_pickup">Create pickup</label>
-        <input type="number" id="new_pickup" name="pickup_number" min="1" required placeholder="New pickup number">
-        <button type="submit">Create</button>
-      </form>
-    {% endif %}
+    <p style="margin-top:1.5rem; color:#4a5568;">
+      Pickup creation is managed outside the web app. Search for an existing pickup to review its pallets and add product entries.
+    </p>
   </section>
 
   <section class="table-card">

@@ -5,6 +5,7 @@ import logging
 import os
 import shutil
 import sqlite3
+from datetime import datetime
 from pathlib import Path
 from typing import Iterable, Optional, List
 from uuid import uuid4
@@ -32,10 +33,8 @@ from .db import (
 from . import iassets
 from .iassets import (
     DATA_DIR,
-    update_local_product_photos,
-    delete_local_product,
-    update_local_product_field,
-    sync_local_products_to_iassets,
+    create_product_entry,
+    delete_product_entry,
     update_iassets_field,
 )
 from ..product import Product
@@ -200,17 +199,12 @@ async def create_pickup_route(request: Request, pickup_number: int = Form(...)):
     if redirect_resp:
         return redirect_resp
 
-    try:
-        iassets.create_pickup(pickup_number, created_by=user["username"])
-    except ValueError as exc:
-        set_flash(request, str(exc), "error")
-        return RedirectResponse(url="/pickups", status_code=status.HTTP_302_FOUND)
-
-    set_flash(request, f"Pickup {pickup_number} created.", "success")
-    return RedirectResponse(
-        url=f"/pickups/{pickup_number}",
-        status_code=status.HTTP_302_FOUND,
+    set_flash(
+        request,
+        "Creating pickups from the web app is disabled. Please use the external workflow.",
+        "error",
     )
+    return RedirectResponse(url="/pickups", status_code=status.HTTP_302_FOUND)
 
 
 @app.get("/pickups/{pickup_number}", response_class=HTMLResponse)
@@ -259,17 +253,17 @@ async def create_pallet_route(
     if redirect_resp:
         return redirect_resp
 
-    try:
-        iassets.create_pallet(pickup_number, pallet_number, created_by=user["username"])
-    except ValueError as exc:
-        set_flash(request, str(exc), "error")
-    else:
-        set_flash(request, f"Pallet {pallet_number} added to pickup {pickup_number}.", "success")
+    set_flash(
+        request,
+        "Pallet creation from the web app is disabled. Please use the external workflow.",
+        "error",
+    )
 
     return RedirectResponse(
         url=f"/pickups/{pickup_number}",
         status_code=status.HTTP_302_FOUND,
     )
+
 
 
 @app.post("/pickups/{pickup_number}/pallets/{pallet_number}/products", response_class=HTMLResponse)
@@ -278,6 +272,11 @@ async def create_product_route(
     pickup_number: int,
     pallet_number: int,
     quantity: int = Form(...),
+    cod_assets: Optional[str] = Form(None),
+    cod_assets_sqlite: Optional[str] = Form(None),
+    sn: str = Form(""),
+    asset_tag: str = Form(""),
+    description: str = Form(""),
     photos: Optional[List[UploadFile]] = File(None),
 ):
     user, redirect_resp = ensure_access(request, allowed_roles=("employee", "supervisor", "admin"))
@@ -290,6 +289,31 @@ async def create_product_route(
             url=f"/pickups/{pickup_number}/pallets/{pallet_number}",
             status_code=status.HTTP_302_FOUND,
         )
+
+    def _parse_optional_int(raw: Optional[str], label: str) -> Optional[int]:
+        if raw is None:
+            return None
+        trimmed = raw.strip()
+        if not trimmed:
+            return None
+        try:
+            return int(trimmed)
+        except ValueError as exc:  # pragma: no cover - defensive
+            raise ValueError(f"{label} must be an integer.") from exc
+
+    try:
+        cod_assets_value = _parse_optional_int(cod_assets, "COD_ASSETS")
+        cod_assets_sqlite_value = _parse_optional_int(cod_assets_sqlite, "COD_ASSETS_SQLITE")
+    except ValueError as exc:
+        set_flash(request, str(exc), "error")
+        return RedirectResponse(
+            url=f"/pickups/{pickup_number}/pallets/{pallet_number}",
+            status_code=status.HTTP_302_FOUND,
+        )
+
+    sn_value = (sn or "").strip()
+    asset_tag_value = (asset_tag or "").strip()
+    description_value = (description or "").strip()
 
     valid_files = [upload for upload in (photos or []) if upload and upload.filename]
     has_photos = bool(valid_files)
@@ -305,6 +329,7 @@ async def create_product_route(
 
     saved_files: List[str] = []
     product_id = None
+    final_photo_paths: List[str] = []
     try:
         if has_photos:
             for upload in valid_files:
@@ -333,7 +358,7 @@ async def create_product_route(
                 logger.exception("Failed to process product images with LLM: %s", exc)
                 set_flash(
                     request,
-                    "Images uploaded, but automatic description failed. Please edit manually when available.",
+                    "Images uploaded, but automatic description failed. Please review the form manually.",
                     "error",
                 )
         else:
@@ -341,25 +366,29 @@ async def create_product_route(
             product.description_raw = ""
 
         data = product.description_json or {}
-        serial_number = data.get("serial_number", "")
-        short_description = data.get("short_description", "")
-        commodity = data.get("commodity", "")
-        destination = data.get("destination", "")
-        description_raw = product.description_raw or ""
+        llm_serial = (data.get("serial_number") or "").strip()
+        llm_short = (data.get("short_description") or "").strip()
+        llm_asset_tag = (data.get("asset_tag") or "").strip()
+        description_raw = (product.description_raw or "").strip()
 
-        description_raw = product.description_raw or ""
+        if not sn_value:
+            sn_value = llm_serial
+        if not description_value:
+            description_value = llm_short or description_raw or ""
+        if not asset_tag_value:
+            asset_tag_value = llm_asset_tag or product.asset_tag
 
-        product_id = iassets.create_local_product(
+        product_id = create_product_entry(
             pickup_number=pickup_number,
             pallet_number=pallet_number,
             quantity=quantity,
-            serial_number=serial_number,
-            short_description=short_description,
-            commodity=commodity,
-            destination=destination,
+            serial_number=sn_value,
+            short_description=llm_short,
             description_raw=description_raw,
-            photos=[],
             created_by=user["username"],
+            cod_assets=cod_assets_value,
+            cod_assets_sqlite=cod_assets_sqlite_value,
+            asset_tag=asset_tag_value,
         )
 
         final_dir = base_dir / f"product_{product_id}"
@@ -369,47 +398,48 @@ async def create_product_route(
 
         if has_photos:
             staging_dir.rename(final_dir)
-            final_photo_paths: List[str] = []
             for filename in saved_files:
                 photo_path = final_dir / filename
                 if photo_path.exists():
                     final_photo_paths.append(str(photo_path.relative_to(DATA_DIR)))
         else:
             final_dir.mkdir(parents=True, exist_ok=True)
-            final_photo_paths = []
-
-        update_local_product_photos(product_id, final_photo_paths)
 
         metadata = {
             "product_id": product_id,
             "pickup_number": pickup_number,
             "pallet_number": pallet_number,
             "quantity": quantity,
-            "serial_number": serial_number,
-            "short_description": short_description,
-            "commodity": commodity,
-            "destination": destination,
+            "cod_assets": cod_assets_value,
+            "cod_assets_sqlite": cod_assets_sqlite_value or product_id,
+            "sn": sn_value,
+            "asset_tag": asset_tag_value,
+            "description": description_value,
             "description_raw": description_raw,
             "photos": final_photo_paths,
             "created_by": user["username"],
+            "timestamp": datetime.utcnow().isoformat(timespec="seconds"),
         }
 
         try:
             with open(final_dir / "metadata.json", "w", encoding="utf-8") as meta_file:
                 json.dump(metadata, meta_file, indent=2)
-        except Exception:
+        except Exception:  # pragma: no cover - best effort
             logger.warning("Failed to write metadata for product %s", product_id, exc_info=True)
 
-        message = f"Product captured (#{product_id})"
-        if short_description:
-            message += f": {short_description}"
-        elif has_photos:
-            message += ". AI description pending."
+        summary = description_value or sn_value or asset_tag_value
+        if summary:
+            message = f"Product #{product_id} stored — {summary[:80]}"
+        else:
+            message = f"Product #{product_id} stored."
         set_flash(request, message, "success")
-    except Exception as exc:
+    except Exception:
         logger.exception("Failed to capture product for pickup %s pallet %s", pickup_number, pallet_number)
         if product_id is not None:
-            delete_local_product(product_id)
+            try:
+                delete_product_entry(product_id)
+            except Exception:
+                logger.warning("Failed to delete IASSETS entry %s after error", product_id, exc_info=True)
         set_flash(request, "Could not capture product. Please try again.", "error")
     finally:
         try:
@@ -425,53 +455,6 @@ async def create_product_route(
         url=f"/pickups/{pickup_number}/pallets/{pallet_number}",
         status_code=status.HTTP_302_FOUND,
     )
-
-
-@app.post(
-    "/pickups/{pickup_number}/pallets/{pallet_number}/products/{product_id}/update",
-    response_class=JSONResponse,
-)
-async def update_product_field_route(
-    request: Request,
-    pickup_number: int,
-    pallet_number: int,
-    product_id: int,
-    update: ProductFieldUpdate,
-):
-    user, redirect_resp = ensure_access(request, allowed_roles=("employee", "supervisor", "admin"))
-    if redirect_resp:
-        return JSONResponse({"status": "error", "message": "Unauthorized."}, status_code=403)
-
-    try:
-        new_value = update_local_product_field(
-            product_id=product_id,
-            pickup_number=pickup_number,
-            pallet_number=pallet_number,
-            field=update.field,
-            raw_value=update.value,
-        )
-    except ValueError as exc:
-        logger.warning(
-            "Failed to update product %s (pickup %s pallet %s field %s): %s",
-            product_id,
-            pickup_number,
-            pallet_number,
-            update.field,
-            exc,
-        )
-        return JSONResponse({"status": "error", "message": str(exc)}, status_code=400)
-    except Exception:
-        logger.exception(
-            "Unexpected error updating product %s (pickup %s pallet %s field %s)",
-            product_id,
-            pickup_number,
-            pallet_number,
-            update.field,
-        )
-        return JSONResponse({"status": "error", "message": "Server error."}, status_code=500)
-
-    return JSONResponse({"status": "ok", "value": new_value})
-
 
 @app.post(
     "/pickups/{pickup_number}/pallets/{pallet_number}/iassets/{row_id}/update",
@@ -517,32 +500,6 @@ async def update_iassets_field_route(
         return JSONResponse({"status": "error", "message": "Server error."}, status_code=500)
 
     return JSONResponse({"status": "ok", "value": new_value})
-
-
-@app.post(
-    "/pickups/{pickup_number}/pallets/{pallet_number}/sync",
-    response_class=JSONResponse,
-)
-async def sync_products_route(
-    request: Request,
-    pickup_number: int,
-    pallet_number: int,
-):
-    user, redirect_resp = ensure_access(request, allowed_roles=("employee", "supervisor", "admin"))
-    if redirect_resp:
-        return JSONResponse({"status": "error", "message": "Unauthorized."}, status_code=403)
-
-    try:
-        synced = sync_local_products_to_iassets(pickup_number, pallet_number)
-    except Exception:
-        logger.exception(
-            "Failed to sync local products for pickup %s pallet %s", pickup_number, pallet_number
-        )
-        return JSONResponse({"status": "error", "message": "Sync failed."}, status_code=500)
-
-    return JSONResponse({"status": "ok", "synced": synced})
-
-
 @app.get("/pickups/{pickup_number}/pallets/{pallet_number}", response_class=HTMLResponse)
 async def pallet_detail(
     request: Request,
@@ -555,7 +512,6 @@ async def pallet_detail(
         return redirect_resp
 
     items = iassets.fetch_pallet_items(pickup_number, pallet_number)
-    pending = iassets.list_local_products(pickup_number, pallet_number)
     flash = consume_flash(request)
     ctx = {
         "request": request,
@@ -563,7 +519,6 @@ async def pallet_detail(
         "pickup_number": pickup_number,
         "pallet_number": pallet_number,
         "items": items,
-        "pending": pending,
         "flash": flash,
         "can_edit": user["role"] in ("employee", "supervisor", "admin"),
     }

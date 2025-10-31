@@ -4,7 +4,6 @@ import os
 import logging
 from contextlib import contextmanager
 from datetime import datetime
-import json
 from threading import local
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -101,70 +100,34 @@ def _normalize_timestamp(value: Any) -> Optional[str]:
         return str(value)
 
 
-def _table_exists_access(table_name: str) -> bool:
-    normalized = table_name.upper()
-    rows = _fetch_access(
-        """
-        SELECT COUNT(*) AS total
-        FROM INFORMATION_SCHEMA.TABLES
-        WHERE TABLE_SCHEMA = 'PUBLIC'
-          AND UCASE(TABLE_NAME) = ?
-        """,
-        [normalized],
-    )
-    if not rows:
-        return False
-    return bool(rows[0].get("total") or rows[0].get("TOTAL"))
+def _parse_string_field(value: Optional[str]) -> str:
+    return (value or "").strip()
+
+
+def _parse_optional_int_field(value: Optional[str]) -> Optional[int]:
+    trimmed = (value or "").strip()
+    if not trimmed:
+        return None
+    try:
+        return int(trimmed)
+    except ValueError as exc:  # pragma: no cover - defensive
+        raise ValueError("Value must be a whole number.") from exc
+
+
+def _parse_positive_quantity(value: Optional[str]) -> int:
+    trimmed = (value or "").strip()
+    try:
+        qty = int(trimmed)
+    except ValueError as exc:  # pragma: no cover - defensive
+        raise ValueError("Quantity must be a positive integer.") from exc
+    if qty <= 0:
+        raise ValueError("Quantity must be a positive integer.")
+    return qty
 
 
 def ensure_support_tables() -> None:
-    tables = {
-        "LOCAL_PICKUPS": """
-            CREATE TABLE LOCAL_PICKUPS (
-                PICKUP_NUMBER LONG NOT NULL,
-                CREATED_BY TEXT(255),
-                CREATED_AT TEXT(32),
-                CONSTRAINT PK_LOCAL_PICKUPS PRIMARY KEY (PICKUP_NUMBER)
-            )
-        """,
-        "LOCAL_PALLETS": """
-            CREATE TABLE LOCAL_PALLETS (
-                ID AUTOINCREMENT PRIMARY KEY,
-                PICKUP_NUMBER LONG NOT NULL,
-                PALLET_NUMBER LONG NOT NULL,
-                CREATED_BY TEXT(255),
-                CREATED_AT TEXT(32),
-                CONSTRAINT UQ_LOCAL_PALLETS UNIQUE (PICKUP_NUMBER, PALLET_NUMBER)
-            )
-        """,
-        "LOCAL_PRODUCTS": """
-            CREATE TABLE LOCAL_PRODUCTS (
-                ID AUTOINCREMENT PRIMARY KEY,
-                PICKUP_NUMBER LONG NOT NULL,
-                PALLET_NUMBER LONG NOT NULL,
-                QUANTITY LONG NOT NULL,
-                SERIAL_NUMBER TEXT(255),
-                SHORT_DESCRIPTION TEXT(255),
-                COMMODITY TEXT(255),
-                DESTINATION TEXT(255),
-                DESCRIPTION_RAW MEMO,
-                PHOTOS MEMO,
-                CREATED_BY TEXT(255),
-                CREATED_AT TEXT(32)
-            )
-        """,
-    }
-
-    for table, ddl in tables.items():
-        if _table_exists_access(table):
-            continue
-        with _connect_access() as conn:
-            cur = conn.cursor()
-            try:
-                cur.execute(ddl)
-                conn.commit()
-            finally:
-                cur.close()
+    """No-op placeholder retained for compatibility."""
+    return
 
 
 def pickup_exists(pickup_number: int) -> bool:
@@ -180,14 +143,7 @@ def pickup_exists(pickup_number: int) -> bool:
         count = rows[0].get("total") or rows[0].get("TOTAL") or 0
         if count:
             return True
-
-    local_rows = _fetch_access(
-        """
-        SELECT 1 FROM LOCAL_PICKUPS WHERE PICKUP_NUMBER = ?
-        """,
-        [pickup_number],
-    )
-    return bool(local_rows)
+    return False
 
 
 def create_pickup(pickup_number: int, *, created_by: Optional[str] = None) -> None:
@@ -195,36 +151,60 @@ def create_pickup(pickup_number: int, *, created_by: Optional[str] = None) -> No
         raise ValueError("Pickup number must be a positive integer.")
     rows = _fetch_access(
         """
-        SELECT COUNT(*) AS total
+        SELECT 1
         FROM IASSETS
         WHERE PICKUP_NUMBER = ?
+        LIMIT 1
         """,
         [pickup_number],
     )
-    count = 0
     if rows:
-        count = rows[0].get("total") or rows[0].get("TOTAL") or 0
-    if count:
         raise ValueError("Pickup already exists in IASSETS.")
 
-    local_existing = _fetch_access(
-        """
-        SELECT 1 FROM LOCAL_PICKUPS WHERE PICKUP_NUMBER = ?
-        """,
-        [pickup_number],
-    )
-    if local_existing:
-        raise ValueError("Pickup already exists.")
-
+    timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
     with _connect_access() as conn:
         cur = conn.cursor()
         try:
             cur.execute(
                 """
-                INSERT INTO LOCAL_PICKUPS (PICKUP_NUMBER, CREATED_BY, CREATED_AT)
-                VALUES (?, ?, ?)
+                DELETE FROM IASSETS
+                WHERE PICKUP_NUMBER = ?
+                  AND IIF(COD_PALLET IS NULL, 0, COD_PALLET) = ?
+                  AND QUANTITY = 0
+                  AND (DESCRIPTION IS NULL OR DESCRIPTION = '')
+                  AND (SN IS NULL OR SN = '')
                 """,
-                (pickup_number, created_by, datetime.utcnow().isoformat(timespec="seconds")),
+                (pickup_number, pallet_number),
+            )
+            cur.execute(
+                """
+                INSERT INTO IASSETS (
+                    PICKUP_NUMBER,
+                    COD_PALLET,
+                    QUANTITY,
+                    DESCRIPTION,
+                    SN,
+                    WEBCAM2,
+                    BATTERY2,
+                    PARTMISSING,
+                    DT,
+                    DT_UPDATE,
+                    FLAG,
+                    FLAG_SEND,
+                    UPLOAD_KYOZOU,
+                    PROCBY
+                ) VALUES (?, ?, ?, ?, ?, 0, 0, 0, ?, ?, 0, 0, 0, ?)
+                """,
+                (
+                    pickup_number,
+                    None,
+                    0,
+                    "",
+                    "",
+                    timestamp,
+                    timestamp,
+                    created_by or None,
+                ),
             )
             conn.commit()
         finally:
@@ -302,82 +282,6 @@ def list_pickups(
             "source": "iassets",
         }
 
-    local_where = "WHERE lp.PICKUP_NUMBER = ?" if pickup_query is not None else ""
-    local_params: List[object] = [pickup_query] if pickup_query is not None else []
-
-    local_rows = _fetch_access(
-        f"""
-        SELECT
-            lp.PICKUP_NUMBER,
-            lp.CREATED_AT,
-            COALESCE(lpagg.PALLET_COUNT, 0) AS PALLET_COUNT,
-            lpagg.LAST_PALLET_CREATED,
-            prod.LAST_PRODUCT
-        FROM LOCAL_PICKUPS lp
-        LEFT JOIN (
-            SELECT inner_lp.PICKUP_NUMBER,
-                   COUNT(*) AS PALLET_COUNT,
-                   MAX(inner_lp.CREATED_AT) AS LAST_PALLET_CREATED
-            FROM (
-                SELECT PICKUP_NUMBER, PALLET_NUMBER, MAX(CREATED_AT) AS CREATED_AT
-                FROM LOCAL_PALLETS
-                GROUP BY PICKUP_NUMBER, PALLET_NUMBER
-            ) AS inner_lp
-            GROUP BY inner_lp.PICKUP_NUMBER
-        ) AS lpagg
-            ON lp.PICKUP_NUMBER = lpagg.PICKUP_NUMBER
-        LEFT JOIN (
-            SELECT PICKUP_NUMBER, MAX(CREATED_AT) AS LAST_PRODUCT
-            FROM LOCAL_PRODUCTS
-            GROUP BY PICKUP_NUMBER
-        ) AS prod
-            ON lp.PICKUP_NUMBER = prod.PICKUP_NUMBER
-        {local_where}
-        """,
-        local_params,
-    )
-
-    def _row_pickup_value(row: Dict[str, object]) -> Optional[int]:
-        value = row.get("PICKUP_NUMBER") or row.get("pickup_number")
-        if value is None:
-            return None
-        try:
-            return int(value)
-        except (TypeError, ValueError):
-            return None
-
-    for row in local_rows:
-        pickup_val = _row_pickup_value(row)
-        if pickup_val is None:
-            continue
-        pickup_key = pickup_val
-        entry = pickups.get(pickup_key)
-        local_created = _normalize_timestamp(row.get("CREATED_AT") or row.get("created_at"))
-        last_pallet_created = _normalize_timestamp(row.get("LAST_PALLET_CREATED") or row.get("last_pallet_created"))
-        last_product = _normalize_timestamp(row.get("LAST_PRODUCT") or row.get("last_product"))
-        candidates = [
-            local_created,
-            last_pallet_created,
-            last_product,
-        ]
-        candidates = [value for value in candidates if value]
-        latest_local_dt = max(candidates) if candidates else local_created
-
-        if entry:
-            current_dt = entry.get("DT_UPDATE")
-            if latest_local_dt and (current_dt is None or latest_local_dt > current_dt):
-                entry["DT_UPDATE"] = latest_local_dt
-            if entry.get("source") == "iassets":
-                entry["source"] = "mixed"
-        else:
-            entry = {
-                "PICKUP_NUMBER": pickup_key,
-                "TOTAL_PALLETS": int(row.get("PALLET_COUNT") or row.get("pallet_count") or 0),
-                "DT_UPDATE": latest_local_dt,
-                "source": "local",
-            }
-            pickups[pickup_key] = entry
-
     ordered_keys = sorted(pickups.keys(), reverse=True)
     total_count = len(ordered_keys)
 
@@ -401,39 +305,74 @@ def create_pallet(
 
     rows = _fetch_access(
         """
-        SELECT COUNT(*) AS total
+        SELECT 1
         FROM IASSETS
         WHERE PICKUP_NUMBER = ? AND IIF(COD_PALLET IS NULL, 0, COD_PALLET) = ?
+        LIMIT 1
         """,
         [pickup_number, pallet_number],
     )
-    count = 0
     if rows:
-        count = rows[0].get("total") or rows[0].get("TOTAL") or 0
-    if count:
         raise ValueError("Pallet already exists in IASSETS.")
 
-    local_rows = _fetch_access(
-        """
-        SELECT 1
-        FROM LOCAL_PALLETS
-        WHERE PICKUP_NUMBER = ? AND PALLET_NUMBER = ?
-        """,
-        [pickup_number, pallet_number],
-    )
-    if local_rows:
-        raise ValueError("Pallet already exists.")
-
+    timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
     with _connect_access() as conn:
         cur = conn.cursor()
         try:
             cur.execute(
                 """
-                INSERT INTO LOCAL_PALLETS (PICKUP_NUMBER, PALLET_NUMBER, CREATED_BY, CREATED_AT)
-                VALUES (?, ?, ?, ?)
+                SELECT COD_IASSETS
+                FROM IASSETS
+                WHERE PICKUP_NUMBER = ? AND COD_PALLET IS NULL
+                ORDER BY COD_IASSETS
+                LIMIT 1
                 """,
-                (pickup_number, pallet_number, created_by, datetime.utcnow().isoformat(timespec="seconds")),
+                (pickup_number,),
             )
+            placeholder = cur.fetchone()
+            if placeholder:
+                cur.execute(
+                    """
+                    UPDATE IASSETS
+                    SET COD_PALLET = ?,
+                        QUANTITY = 0,
+                        DESCRIPTION = '',
+                        SN = '',
+                        DT_UPDATE = ?,
+                        DT = COALESCE(DT, ?),
+                        WEBCAM2 = COALESCE(WEBCAM2, 0),
+                        BATTERY2 = COALESCE(BATTERY2, 0),
+                        PARTMISSING = COALESCE(PARTMISSING, 0),
+                        FLAG = COALESCE(FLAG, 0),
+                        FLAG_SEND = COALESCE(FLAG_SEND, 0),
+                        UPLOAD_KYOZOU = COALESCE(UPLOAD_KYOZOU, 0),
+                        PROCBY = COALESCE(PROCBY, ?)
+                    WHERE COD_IASSETS = ?
+                    """,
+                    (pallet_number, timestamp, timestamp, created_by or None, placeholder[0]),
+                )
+            else:
+                cur.execute(
+                    """
+                    INSERT INTO IASSETS (
+                        PICKUP_NUMBER,
+                        COD_PALLET,
+                        QUANTITY,
+                        DESCRIPTION,
+                        SN,
+                        WEBCAM2,
+                        BATTERY2,
+                        PARTMISSING,
+                        DT,
+                        DT_UPDATE,
+                        FLAG,
+                        FLAG_SEND,
+                        UPLOAD_KYOZOU,
+                        PROCBY
+                    ) VALUES (?, ?, 0, '', '', 0, 0, 0, ?, ?, 0, 0, 0, ?)
+                    """,
+                    (pickup_number, pallet_number, timestamp, timestamp, created_by or None),
+                )
             conn.commit()
         finally:
             cur.close()
@@ -445,36 +384,12 @@ def list_pallets(pickup_number: int) -> List[Dict[str, object]]:
         SELECT
             COD_PALLET,
             COUNT(*) AS TOTAL_ENTRIES,
-            MAX(dt_update) AS MAX_DT_UPDATE,
-            MAX(dt) AS MAX_DT,
-            MAX(dt_processed) AS MAX_DT_PROCESSED,
-            MAX(dt_pickup) AS MAX_DT_PICKUP
+            MAX(COALESCE(dt_update, dt, dt_processed, dt_pickup)) AS MAX_DT
         FROM IASSETS
         WHERE PICKUP_NUMBER = ? AND COD_PALLET IS NOT NULL
         GROUP BY COD_PALLET
         """,
         [pickup_number],
-    )
-
-    local = _fetch_access(
-        """
-        SELECT lp.PICKUP_NUMBER,
-               lp.PALLET_NUMBER AS COD_PALLET,
-               lp.CREATED_AT,
-               COALESCE(lp2.LOCAL_ENTRIES, 0) AS LOCAL_ENTRIES,
-               COALESCE(lp2.LOCAL_DT, lp.CREATED_AT) AS LOCAL_DT
-        FROM LOCAL_PALLETS lp
-        LEFT JOIN (
-            SELECT PALLET_NUMBER,
-                   COUNT(*) AS LOCAL_ENTRIES,
-                   MAX(CREATED_AT) AS LOCAL_DT
-            FROM LOCAL_PRODUCTS
-            WHERE PICKUP_NUMBER = ?
-            GROUP BY PALLET_NUMBER
-        ) lp2 ON lp2.PALLET_NUMBER = lp.PALLET_NUMBER
-        WHERE lp.PICKUP_NUMBER = ?
-        """,
-        [pickup_number, pickup_number],
     )
 
     pallets: Dict[int, Dict[str, object]] = {}
@@ -487,47 +402,13 @@ def list_pallets(pickup_number: int) -> List[Dict[str, object]]:
         except (TypeError, ValueError):
             continue
         total_entries = row.get("TOTAL_ENTRIES") or row.get("total_entries") or 0
-        dt_candidates = [
-            row.get("MAX_DT_UPDATE") or row.get("max_dt_update"),
-            row.get("MAX_DT") or row.get("max_dt"),
-            row.get("MAX_DT_PROCESSED") or row.get("max_dt_processed"),
-            row.get("MAX_DT_PICKUP") or row.get("max_dt_pickup"),
-        ]
-        dt_candidates = [_normalize_timestamp(val) for val in dt_candidates if val]
-        dt_update = max(dt_candidates) if dt_candidates else None
+        dt_update = _normalize_timestamp(row.get("MAX_DT") or row.get("max_dt"))
         pallets[pallet_key] = {
             "COD_PALLET": pallet_key,
             "TOTAL_ENTRIES": total_entries or 0,
             "DT_UPDATE": dt_update,
             "source": "iassets",
         }
-
-    for row in local:
-        pallet = row["COD_PALLET"]
-        if pallet is None:
-            continue
-        try:
-            pallet_key = int(pallet)
-        except (TypeError, ValueError):
-            continue
-        entry = pallets.get(pallet_key)
-        if entry:
-            entry.setdefault("source", "mixed")
-            entry.setdefault("created_at", _normalize_timestamp(row.get("CREATED_AT") or row.get("created_at")))
-            local_entries = row.get("LOCAL_ENTRIES") or row.get("local_entries") or 0
-            entry["TOTAL_ENTRIES"] = (entry.get("TOTAL_ENTRIES") or 0) + local_entries
-            local_dt = _normalize_timestamp(row.get("local_dt") or row.get("LOCAL_DT"))
-            if local_dt:
-                current_dt = entry.get("DT_UPDATE")
-                if not current_dt or local_dt > current_dt:
-                    entry["DT_UPDATE"] = local_dt
-        else:
-            pallets[pallet_key] = {
-                "COD_PALLET": pallet_key,
-                "TOTAL_ENTRIES": row.get("local_entries") or row.get("LOCAL_ENTRIES") or 0,
-                "DT_UPDATE": _normalize_timestamp(row.get("local_dt") or row.get("LOCAL_DT")),
-                "source": "local",
-            }
 
     ordered = sorted(pallets.values(), key=lambda p: p["COD_PALLET"])
     return ordered
@@ -604,195 +485,98 @@ def fetch_pallet_items(pickup_number: int, pallet_number: int) -> List[Dict[str,
     return results
 
 
-def create_local_product(
+def create_product_entry(
     *,
     pickup_number: int,
     pallet_number: int,
     quantity: int,
     serial_number: str,
     short_description: str,
-    commodity: str,
-    destination: str,
     description_raw: str,
-    photos: List[str],
     created_by: Optional[str] = None,
+    cod_assets: Optional[int] = None,
+    cod_assets_sqlite: Optional[int] = None,
+    asset_tag: str = "",
 ) -> int:
     if quantity <= 0:
         raise ValueError("Quantity must be greater than zero.")
+
+    timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+    description = short_description or description_raw or ""
+    serial = serial_number or ""
+
+    asset_tag_value = asset_tag.strip() if asset_tag else ""
 
     with _connect_access() as conn:
         cur = conn.cursor()
         try:
             cur.execute(
                 """
-                INSERT INTO LOCAL_PRODUCTS (
+                INSERT INTO IASSETS (
+                    COD_ASSETS,
+                    COD_ASSETS_SQLITE,
+                    ASSET_TAG,
                     PICKUP_NUMBER,
-                    PALLET_NUMBER,
+                    COD_PALLET,
                     QUANTITY,
-                    SERIAL_NUMBER,
-                    SHORT_DESCRIPTION,
-                    COMMODITY,
-                    DESTINATION,
-                    DESCRIPTION_RAW,
-                    PHOTOS,
-                    CREATED_BY,
-                    CREATED_AT
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    DESCRIPTION,
+                    SN,
+                    WEBCAM2,
+                    BATTERY2,
+                    PARTMISSING,
+                    DT,
+                    DT_UPDATE,
+                    FLAG,
+                    FLAG_SEND,
+                    UPLOAD_KYOZOU,
+                    PROCBY
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, ?, ?, 0, 0, 0, ?)
                 """,
                 (
+                    cod_assets,
+                    cod_assets_sqlite,
+                    asset_tag_value or None,
                     pickup_number,
                     pallet_number,
                     quantity,
-                    serial_number,
-                    short_description,
-                    commodity,
-                    destination,
-                    description_raw,
-                    json.dumps(photos),
-                    created_by,
-                    datetime.utcnow().isoformat(timespec="seconds"),
+                    description,
+                    serial,
+                    timestamp,
+                    timestamp,
+                    created_by or None,
                 ),
             )
             cur.execute("SELECT @@IDENTITY")
             row = cur.fetchone()
             new_id = int(row[0]) if row and row[0] is not None else 0
+            if cod_assets_sqlite is None and new_id:
+                cur.execute(
+                    "UPDATE IASSETS SET COD_ASSETS_SQLITE = ? WHERE COD_IASSETS = ?",
+                    (new_id, new_id),
+                )
             conn.commit()
         finally:
             cur.close()
     return new_id
 
 
-def list_local_products(pickup_number: int, pallet_number: int) -> List[Dict[str, object]]:
-    rows = _fetch_access(
-        """
-        SELECT ID,
-               QUANTITY,
-               SERIAL_NUMBER,
-               SHORT_DESCRIPTION,
-               COMMODITY,
-               DESTINATION,
-               DESCRIPTION_RAW,
-               PHOTOS,
-               CREATED_BY,
-               CREATED_AT
-        FROM LOCAL_PRODUCTS
-        WHERE PICKUP_NUMBER = ? AND PALLET_NUMBER = ?
-        ORDER BY CREATED_AT DESC
-        """,
-        [pickup_number, pallet_number],
-    )
-
-    result: List[Dict[str, object]] = []
-    for row in rows:
-        photos_raw = row.get("PHOTOS") or row.get("photos") or "[]"
-        try:
-            photos_list = json.loads(photos_raw)
-        except (TypeError, json.JSONDecodeError):
-            photos_list = []
-        serial = row.get("SERIAL_NUMBER") or row.get("serial_number") or ""
-        short_desc = row.get("SHORT_DESCRIPTION") or row.get("short_description") or ""
-        desc_raw = row.get("DESCRIPTION_RAW") or row.get("description_raw") or ""
-        quantity = row.get("QUANTITY") or row.get("quantity") or 0
-        row_id = row.get("ID") or row.get("id")
-
-        result.append(
-            {
-                "id": row_id,
-                "QUANTITY": quantity,
-                "SN": serial or "",
-                "short_description": short_desc,
-                "commodity": row.get("COMMODITY") or row.get("commodity"),
-                "destination": row.get("DESTINATION") or row.get("destination"),
-                "description_raw": desc_raw,
-                "photos": photos_list,
-                "created_by": row.get("CREATED_BY") or row.get("created_by"),
-                "created_at": _normalize_timestamp(row.get("CREATED_AT") or row.get("created_at")),
-                "COD_ASSETS": None,
-                "COD_ASSETS_SQLITE": row_id,
-                "DESCRIPTION": short_desc or desc_raw or "",
-                "ASSET_TAG": "",
-            }
-        )
-
-    return result
-
-
-_BASE_LOCAL_FIELDS = {
-    "quantity": int,
-    "serial_number": str,
-    "short_description": str,
-    "commodity": str,
-    "destination": str,
-}
-
-_LOCAL_COLUMN_NAMES = {
-    "quantity": "QUANTITY",
-    "serial_number": "SERIAL_NUMBER",
-    "short_description": "SHORT_DESCRIPTION",
-    "commodity": "COMMODITY",
-    "destination": "DESTINATION",
-}
-
-_EDITABLE_PRODUCT_FIELDS = {
-    **_BASE_LOCAL_FIELDS,
-    **{key.upper(): value for key, value in _BASE_LOCAL_FIELDS.items()},
-}
-
-
-def update_local_product_field(
-    *,
-    product_id: int,
-    pickup_number: int,
-    pallet_number: int,
-    field: str,
-    raw_value: str,
-) -> str:
-    normalized = field.lower()
-    if normalized not in _BASE_LOCAL_FIELDS:
-        raise ValueError("Field is not editable.")
-
-    exists = _fetch_access(
-        """
-        SELECT ID FROM LOCAL_PRODUCTS
-        WHERE ID = ? AND PICKUP_NUMBER = ? AND PALLET_NUMBER = ?
-        """,
-        [product_id, pickup_number, pallet_number],
-    )
-    if not exists:
-        raise ValueError("Product not found.")
-
-    converter = _BASE_LOCAL_FIELDS[normalized]
-    if converter is int:
-        try:
-            value = int(raw_value)
-        except (TypeError, ValueError):
-            raise ValueError("Quantity must be a positive integer.")
-        if value <= 0:
-            raise ValueError("Quantity must be a positive integer.")
-    else:
-        value = (raw_value or "").strip()
-
-    column = _LOCAL_COLUMN_NAMES[normalized]
-
+def delete_product_entry(row_id: int) -> None:
     with _connect_access() as conn:
         cur = conn.cursor()
         try:
-            cur.execute(
-                f"UPDATE LOCAL_PRODUCTS SET {column} = ? WHERE ID = ?",
-                (value, product_id),
-            )
+            cur.execute("DELETE FROM IASSETS WHERE COD_IASSETS = ?", (row_id,))
             conn.commit()
         finally:
             cur.close()
 
-    return str(value)
-
 
 _EDITABLE_IASSETS_FIELDS = {
-    "SN": str,
-    "ASSET_TAG": str,
-    "DESCRIPTION": str,
-    "QUANTITY": int,
+    "SN": (_parse_string_field, None),
+    "ASSET_TAG": (_parse_string_field, None),
+    "DESCRIPTION": (_parse_string_field, None),
+    "QUANTITY": (_parse_positive_quantity, "Quantity must be a positive integer."),
+    "COD_ASSETS": (_parse_optional_int_field, "COD_ASSETS must be a whole number or left blank."),
+    "COD_ASSETS_SQLITE": (_parse_optional_int_field, "COD_ASSETS_SQLITE must be a whole number or left blank."),
 }
 
 
@@ -807,16 +591,11 @@ def update_iassets_field(
     if field not in _EDITABLE_IASSETS_FIELDS:
         raise ValueError("Field is not editable.")
 
-    converter = _EDITABLE_IASSETS_FIELDS[field]
-    if converter is int:
-        try:
-            value = int(raw_value)
-        except (TypeError, ValueError):
-            raise ValueError("Quantity must be a positive integer.")
-        if value <= 0:
-            raise ValueError("Quantity must be a positive integer.")
-    else:
-        value = (raw_value or "").strip()
+    parser, message = _EDITABLE_IASSETS_FIELDS[field]
+    try:
+        value = parser(raw_value)
+    except ValueError as exc:
+        raise ValueError(message or str(exc)) from exc
 
     with _connect_access() as conn:
         cur = conn.cursor()
@@ -842,101 +621,4 @@ def update_iassets_field(
         finally:
             cur.close()
 
-    return str(value)
-
-
-def sync_local_products_to_iassets(
-    pickup_number: int,
-    pallet_number: int,
-) -> int:
-    rows = _fetch_access(
-        """
-        SELECT ID, QUANTITY, SERIAL_NUMBER, SHORT_DESCRIPTION, COMMODITY, DESTINATION, DESCRIPTION_RAW
-        FROM LOCAL_PRODUCTS
-        WHERE PICKUP_NUMBER = ? AND PALLET_NUMBER = ?
-        ORDER BY CREATED_AT
-        """,
-        [pickup_number, pallet_number],
-    )
-
-    if not rows:
-        return 0
-
-    insert_sql = (
-        """
-        INSERT INTO IASSETS (
-            PICKUP_NUMBER,
-            COD_PALLET,
-            QUANTITY,
-            DESCRIPTION,
-            SN,
-            COD_ASSETS_SQLITE
-        ) VALUES (?, ?, ?, ?, ?, ?)
-        """
-    )
-
-    ids: List[int] = []
-    with _connect_access() as acc_conn:
-        cur = acc_conn.cursor()
-        try:
-            for row in rows:
-                short_desc = row.get("SHORT_DESCRIPTION") or row.get("short_description") or ""
-                desc_raw = row.get("DESCRIPTION_RAW") or row.get("description_raw") or ""
-                description = short_desc or desc_raw or ""
-                serial = row.get("SERIAL_NUMBER") or row.get("serial_number") or None
-                quantity_val = row.get("QUANTITY") or row.get("quantity") or 0
-                try:
-                    quantity = int(quantity_val)
-                except (TypeError, ValueError):
-                    quantity = 0
-                row_id_val = row.get("ID") or row.get("id")
-                if row_id_val is None:
-                    continue
-                row_id = int(row_id_val)
-                ids.append(row_id)
-                cur.execute(
-                    insert_sql,
-                    (
-                        pickup_number,
-                        pallet_number,
-                        quantity,
-                        description,
-                        serial,
-                        row_id,
-                    ),
-                )
-
-            if ids:
-                placeholders = ",".join("?" for _ in ids)
-                cur.execute(
-                    f"DELETE FROM LOCAL_PRODUCTS WHERE ID IN ({placeholders})",
-                    ids,
-                )
-            acc_conn.commit()
-        finally:
-            cur.close()
-
-    return len(rows)
-
-
-def update_local_product_photos(product_id: int, photos: List[str]) -> None:
-    with _connect_access() as conn:
-        cur = conn.cursor()
-        try:
-            cur.execute(
-                "UPDATE LOCAL_PRODUCTS SET PHOTOS = ? WHERE ID = ?",
-                (json.dumps(photos), product_id),
-            )
-            conn.commit()
-        finally:
-            cur.close()
-
-
-def delete_local_product(product_id: int) -> None:
-    with _connect_access() as conn:
-        cur = conn.cursor()
-        try:
-            cur.execute("DELETE FROM LOCAL_PRODUCTS WHERE ID = ?", (product_id,))
-            conn.commit()
-        finally:
-            cur.close()
+    return "" if value is None else str(value)

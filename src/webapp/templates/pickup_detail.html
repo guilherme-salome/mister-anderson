@@ -22,17 +22,6 @@
     <div class="alert {{ flash.category }}">{{ flash.message }}</div>
   {% endif %}
 
-  {% if can_edit %}
-  <section class="card">
-    <h2>Add Pallet</h2>
-    <form method="post" action="/pickups/{{ pickup_number }}/pallets/create" class="inline">
-      <label for="pallet_number">Pallet number</label>
-      <input type="number" id="pallet_number" name="pallet_number" min="1" required>
-      <button type="submit">Add Pallet</button>
-    </form>
-  </section>
-  {% endif %}
-
   <section class="table-card">
     <h2>Pallets</h2>
     <table>
@@ -52,7 +41,7 @@
           </tr>
         {% else %}
           <tr>
-            <td colspan="3" style="text-align:center;">No pallets defined yet.</td>
+            <td colspan="3" style="text-align:center;">No pallets found. Pallets must be created in the external workflow before products can be captured.</td>
           </tr>
         {% endfor %}
       </tbody>
