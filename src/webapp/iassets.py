@@ -136,6 +136,7 @@ def list_pickups(
                 SELECT
                     pickup_number,
                     SUM(COALESCE(quantity, 0)) AS total_quantity,
+                    COUNT(DISTINCT COD_PALLET) AS pallet_count,
                     MAX(COALESCE(dt_update, dt, dt_processed, dt_pickup)) AS last_update
                 FROM IASSETS
                 WHERE pickup_number IS NOT NULL
@@ -143,7 +144,7 @@ def list_pickups(
             )
             SELECT
                 c.pickup_number AS PICKUP_NUMBER,
-                COALESCE(agg.total_quantity, 0) AS QUANTITY,
+                COALESCE(agg.pallet_count, 0) AS TOTAL_PALLETS,
                 COALESCE(agg.last_update, lp.created_at) AS DT_UPDATE
             FROM combined c
             LEFT JOIN agg ON agg.pickup_number = c.pickup_number

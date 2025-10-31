@@ -47,7 +47,7 @@
       <thead>
         <tr>
           <th>PICKUP_NUMBER</th>
-          <th>QUANTITY</th>
+          <th class="tooltip" data-tooltip="Calculated on the fly">TOTAL_PALLETS</th>
           <th>DT_UPDATE</th>
         </tr>
       </thead>
@@ -55,7 +55,7 @@
         {% for p in pickups %}
           <tr>
             <td><a href="/pickups/{{ p.PICKUP_NUMBER }}">{{ p.PICKUP_NUMBER }}</a></td>
-            <td>{{ p.QUANTITY or 0 }}</td>
+            <td>{{ p.TOTAL_PALLETS or 0 }}</td>
             <td>{{ p.DT_UPDATE or '—' }}</td>
           </tr>
         {% else %}
