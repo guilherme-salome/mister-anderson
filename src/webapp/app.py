@@ -114,16 +114,6 @@ async def startup_event():
     init_db()
     iassets.ensure_support_tables()
     os.makedirs(TEMPLATES_DIR, exist_ok=True)
-    sync_flag = os.environ.get("SYNC_IASSETS")
-    run_main = os.environ.get("RUN_MAIN")
-    if sync_flag:
-        if run_main is not None and run_main.lower() != "true":
-            logger.info("Skipping IASSETS sync in reload supervisor process.")
-        else:
-            try:
-                iassets.sync_iassets_with_access()
-            except Exception:
-                logger.exception("IASSETS synchronization failed during startup")
 
 
 @app.get("/", response_class=HTMLResponse)
