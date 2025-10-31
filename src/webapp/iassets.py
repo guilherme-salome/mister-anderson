@@ -2,14 +2,29 @@
 
 import os
 import sqlite3
+import logging
 from datetime import datetime
 import json
 from typing import Dict, Iterable, List, Optional, Tuple
+
+from ..db.recreate_from_access import (
+    create_single_table,
+    sync_access_to_sqlite,
+    sync_sqlite_to_access,
+)
+
+try:
+    import jpype  # type: ignore
+except ImportError:  # pragma: no cover
+    jpype = None
 
 
 ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 DATA_DIR = os.path.join(ROOT_DIR, "data")
 A1_DB_PATH = os.path.join(DATA_DIR, "A1ASSETS_DATABASE.sqlite")
+A1_ACCESS_PATH = os.path.join(DATA_DIR, "A1ASSETS_DATABASE.accdb")
+
+logger = logging.getLogger(__name__)
 
 
 def _connect() -> sqlite3.Connection:
@@ -516,6 +531,68 @@ def update_iassets_field(
         conn.commit()
 
     return str(value)
+
+
+def sync_iassets_with_access(
+    *,
+    access_path: Optional[str] = None,
+    sqlite_path: Optional[str] = None,
+    pk_override: Optional[List[str]] = None,
+) -> None:
+    access_path = access_path or os.environ.get("A1ASSETS_ACCESS_PATH", A1_ACCESS_PATH)
+    sqlite_path = sqlite_path or os.environ.get("A1ASSETS_SQLITE_PATH", A1_DB_PATH)
+    pk_override = pk_override or ["COD_IASSETS"]
+
+    if not os.path.isfile(sqlite_path):
+        logger.warning("SQLite path '%s' not found; skipping IASSETS sync.", sqlite_path)
+        return
+
+    if not os.path.isfile(access_path):
+        logger.warning("Access path '%s' not found; skipping IASSETS sync.", access_path)
+        return
+
+    table = "IASSETS"
+    logger.info("Preparing IASSETS table sync from %s", access_path)
+    try:
+        create_single_table(
+            access_path,
+            sqlite_path,
+            table,
+            overwrite=False,
+            preview=False,
+            pk_override=pk_override,
+        )
+    except Exception:
+        logger.debug("create_single_table for %s skipped or failed", table, exc_info=True)
+
+    try:
+        logger.info("Loading IASSETS from Access → SQLite")
+        sync_access_to_sqlite(
+            access_path,
+            sqlite_path,
+            table,
+            pk_override=pk_override,
+        )
+
+        logger.info("Pushing IASSETS from SQLite → Access")
+        sync_sqlite_to_access(
+            sqlite_path,
+            access_path,
+            table,
+            pk_override=pk_override,
+        )
+    except Exception as exc:  # pragma: no cover - defensive
+        if jpype and isinstance(exc, jpype.JVMNotRunning):
+            logger.warning("JVM not running; skipping IASSETS synchronization.")
+            return
+        raise
+
+    logger.info(
+        "IASSETS sync complete (access=%s, sqlite=%s, pk=%s)",
+        access_path,
+        sqlite_path,
+        pk_override,
+    )
 
 
 def sync_local_products_to_iassets(
