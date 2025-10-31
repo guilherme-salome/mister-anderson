@@ -147,68 +147,7 @@ def pickup_exists(pickup_number: int) -> bool:
 
 
 def create_pickup(pickup_number: int, *, created_by: Optional[str] = None) -> None:
-    if pickup_number <= 0:
-        raise ValueError("Pickup number must be a positive integer.")
-    rows = _fetch_access(
-        """
-        SELECT 1
-        FROM IASSETS
-        WHERE PICKUP_NUMBER = ?
-        LIMIT 1
-        """,
-        [pickup_number],
-    )
-    if rows:
-        raise ValueError("Pickup already exists in IASSETS.")
-
-    timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
-    with _connect_access() as conn:
-        cur = conn.cursor()
-        try:
-            cur.execute(
-                """
-                DELETE FROM IASSETS
-                WHERE PICKUP_NUMBER = ?
-                  AND IIF(COD_PALLET IS NULL, 0, COD_PALLET) = ?
-                  AND QUANTITY = 0
-                  AND (DESCRIPTION IS NULL OR DESCRIPTION = '')
-                  AND (SN IS NULL OR SN = '')
-                """,
-                (pickup_number, pallet_number),
-            )
-            cur.execute(
-                """
-                INSERT INTO IASSETS (
-                    PICKUP_NUMBER,
-                    COD_PALLET,
-                    QUANTITY,
-                    DESCRIPTION,
-                    SN,
-                    WEBCAM2,
-                    BATTERY2,
-                    PARTMISSING,
-                    DT,
-                    DT_UPDATE,
-                    FLAG,
-                    FLAG_SEND,
-                    UPLOAD_KYOZOU,
-                    PROCBY
-                ) VALUES (?, ?, ?, ?, ?, 0, 0, 0, ?, ?, 0, 0, 0, ?)
-                """,
-                (
-                    pickup_number,
-                    None,
-                    0,
-                    "",
-                    "",
-                    timestamp,
-                    timestamp,
-                    created_by or None,
-                ),
-            )
-            conn.commit()
-        finally:
-            cur.close()
+    raise NotImplementedError("Pickups must be created through the external workflow.")
 
 
 def list_pickups(
@@ -243,10 +182,10 @@ def list_pickups(
         LEFT JOIN (
             SELECT inner_tbl.PICKUP_NUMBER, COUNT(*) AS PALLET_COUNT
             FROM (
-                SELECT PICKUP_NUMBER, COD_PALLET
+                SELECT PICKUP_NUMBER, COD_ASSETS
                 FROM IASSETS
-                WHERE COD_PALLET IS NOT NULL
-                GROUP BY PICKUP_NUMBER, COD_PALLET
+                WHERE COD_ASSETS IS NOT NULL
+                GROUP BY PICKUP_NUMBER, COD_ASSETS
             ) AS inner_tbl
             GROUP BY inner_tbl.PICKUP_NUMBER
         ) AS pc
@@ -294,123 +233,60 @@ def list_pickups(
 
 def create_pallet(
     pickup_number: int,
-    pallet_number: int,
+    cod_assets: int,
     *,
     created_by: Optional[str] = None,
 ) -> None:
-    if pallet_number <= 0:
-        raise ValueError("Pallet number must be a positive integer.")
-    if not pickup_exists(pickup_number):
-        raise ValueError("Pickup does not exist.")
-
-    rows = _fetch_access(
-        """
-        SELECT 1
-        FROM IASSETS
-        WHERE PICKUP_NUMBER = ? AND IIF(COD_PALLET IS NULL, 0, COD_PALLET) = ?
-        LIMIT 1
-        """,
-        [pickup_number, pallet_number],
-    )
-    if rows:
-        raise ValueError("Pallet already exists in IASSETS.")
-
-    timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
-    with _connect_access() as conn:
-        cur = conn.cursor()
-        try:
-            cur.execute(
-                """
-                SELECT COD_IASSETS
-                FROM IASSETS
-                WHERE PICKUP_NUMBER = ? AND COD_PALLET IS NULL
-                ORDER BY COD_IASSETS
-                LIMIT 1
-                """,
-                (pickup_number,),
-            )
-            placeholder = cur.fetchone()
-            if placeholder:
-                cur.execute(
-                    """
-                    UPDATE IASSETS
-                    SET COD_PALLET = ?,
-                        QUANTITY = 0,
-                        DESCRIPTION = '',
-                        SN = '',
-                        DT_UPDATE = ?,
-                        DT = COALESCE(DT, ?),
-                        WEBCAM2 = COALESCE(WEBCAM2, 0),
-                        BATTERY2 = COALESCE(BATTERY2, 0),
-                        PARTMISSING = COALESCE(PARTMISSING, 0),
-                        FLAG = COALESCE(FLAG, 0),
-                        FLAG_SEND = COALESCE(FLAG_SEND, 0),
-                        UPLOAD_KYOZOU = COALESCE(UPLOAD_KYOZOU, 0),
-                        PROCBY = COALESCE(PROCBY, ?)
-                    WHERE COD_IASSETS = ?
-                    """,
-                    (pallet_number, timestamp, timestamp, created_by or None, placeholder[0]),
-                )
-            else:
-                cur.execute(
-                    """
-                    INSERT INTO IASSETS (
-                        PICKUP_NUMBER,
-                        COD_PALLET,
-                        QUANTITY,
-                        DESCRIPTION,
-                        SN,
-                        WEBCAM2,
-                        BATTERY2,
-                        PARTMISSING,
-                        DT,
-                        DT_UPDATE,
-                        FLAG,
-                        FLAG_SEND,
-                        UPLOAD_KYOZOU,
-                        PROCBY
-                    ) VALUES (?, ?, 0, '', '', 0, 0, 0, ?, ?, 0, 0, 0, ?)
-                    """,
-                    (pickup_number, pallet_number, timestamp, timestamp, created_by or None),
-                )
-            conn.commit()
-        finally:
-            cur.close()
-
+    raise NotImplementedError("Pallets must be created through the external workflow.")
 
 def list_pallets(pickup_number: int) -> List[Dict[str, object]]:
     aggregated = _fetch_access(
         """
         SELECT
-            COD_PALLET,
+            COD_ASSETS,
             COUNT(*) AS TOTAL_ENTRIES,
             MAX(COALESCE(dt_update, dt, dt_processed, dt_pickup)) AS MAX_DT
         FROM IASSETS
-        WHERE PICKUP_NUMBER = ? AND COD_PALLET IS NOT NULL
-        GROUP BY COD_PALLET
+        WHERE PICKUP_NUMBER = ? AND COD_ASSETS IS NOT NULL
+        GROUP BY COD_ASSETS
         """,
         [pickup_number],
     )
 
-    pallets: Dict[int, Dict[str, object]] = {}
+    pallets: List[Dict[str, object]] = []
     for row in aggregated:
-        pallet = row.get("COD_PALLET") or row.get("cod_pallet")
-        if pallet is None:
+        cod_assets_value = row.get("COD_ASSETS") or row.get("cod_assets")
+        if cod_assets_value in (None, ""):
             continue
         try:
-            pallet_key = int(pallet)
+            numeric_cod_assets = int(cod_assets_value)
+            display_cod_assets = numeric_cod_assets
         except (TypeError, ValueError):
-            continue
+            numeric_cod_assets = None
+            display_cod_assets = str(cod_assets_value)
         total_entries = row.get("TOTAL_ENTRIES") or row.get("total_entries") or 0
         dt_update = _normalize_timestamp(row.get("MAX_DT") or row.get("max_dt"))
-        pallets[pallet_key] = {
-            "COD_PALLET": pallet_key,
+        pallets.append(
+            {
+                "COD_ASSETS": display_cod_assets,
+                "COD_ASSETS_NUMERIC": numeric_cod_assets,
             "TOTAL_ENTRIES": total_entries or 0,
             "DT_UPDATE": dt_update,
             "source": "iassets",
-        }
+            }
+        )
 
-    ordered = sorted(pallets.values(), key=lambda p: p["COD_PALLET"])
+    def _sort_key(entry: Dict[str, object]) -> tuple:
+        cod_assets_int = entry.get("COD_ASSETS_NUMERIC")
+        fallback = entry.get("COD_ASSETS")
+        return (
+            cod_assets_int if cod_assets_int is not None else float("inf"),
+            fallback,
+        )
+
+    ordered = sorted(pallets, key=_sort_key)
+    for entry in ordered:
+        entry.pop("COD_ASSETS_NUMERIC", None)
     return ordered
 
 
@@ -418,7 +294,6 @@ def fetch_pickup_items(pickup_number: int, limit: Optional[int] = None) -> List[
     select_clause = ", ".join(
         [
             "COD_IASSETS",
-            "COD_PALLET",
             "COD_ASSETS",
             "COD_ASSETS_SQLITE",
             "QUANTITY",
@@ -428,7 +303,7 @@ def fetch_pickup_items(pickup_number: int, limit: Optional[int] = None) -> List[
     query = (
         f"SELECT {select_clause} FROM IASSETS "
         "WHERE PICKUP_NUMBER = ? "
-        "ORDER BY IIF(COD_PALLET IS NULL, 0, COD_PALLET), COD_IASSETS"
+        "ORDER BY IIF(COD_ASSETS IS NULL, 0, COD_ASSETS), COD_IASSETS"
     )
     params: List[object] = [pickup_number]
     if limit is not None:
@@ -440,7 +315,6 @@ def fetch_pickup_items(pickup_number: int, limit: Optional[int] = None) -> List[
     result: List[Dict[str, object]] = []
     for row in rows:
         data = {
-            "COD_PALLET": row.get("COD_PALLET"),
             "COD_ASSETS": row.get("COD_ASSETS"),
             "COD_ASSETS_SQLITE": row.get("COD_ASSETS_SQLITE"),
             "QUANTITY": row.get("QUANTITY"),
@@ -451,7 +325,7 @@ def fetch_pickup_items(pickup_number: int, limit: Optional[int] = None) -> List[
     return result
 
 
-def fetch_pallet_items(pickup_number: int, pallet_number: int) -> List[Dict[str, object]]:
+def fetch_pallet_items(pickup_number: int, cod_assets: int) -> List[Dict[str, object]]:
     select_clause = ", ".join(
         [
             "COD_IASSETS",
@@ -465,10 +339,10 @@ def fetch_pallet_items(pickup_number: int, pallet_number: int) -> List[Dict[str,
     )
     query = (
         f"SELECT {select_clause} FROM IASSETS "
-        "WHERE PICKUP_NUMBER = ? AND IIF(COD_PALLET IS NULL, 0, COD_PALLET) = ? "
+        "WHERE PICKUP_NUMBER = ? AND COD_ASSETS = ? "
         "ORDER BY COD_IASSETS"
     )
-    rows = _fetch_access(query, [pickup_number, pallet_number])
+    rows = _fetch_access(query, [pickup_number, cod_assets])
     results: List[Dict[str, object]] = []
     for row in rows:
         results.append(
@@ -488,13 +362,12 @@ def fetch_pallet_items(pickup_number: int, pallet_number: int) -> List[Dict[str,
 def create_product_entry(
     *,
     pickup_number: int,
-    pallet_number: int,
+    cod_assets: int,
     quantity: int,
     serial_number: str,
     short_description: str,
     description_raw: str,
     created_by: Optional[str] = None,
-    cod_assets: Optional[int] = None,
     cod_assets_sqlite: Optional[int] = None,
     asset_tag: str = "",
 ) -> int:
@@ -506,6 +379,7 @@ def create_product_entry(
     serial = serial_number or ""
 
     asset_tag_value = asset_tag.strip() if asset_tag else ""
+    cod_assets_value = cod_assets
 
     with _connect_access() as conn:
         cur = conn.cursor()
@@ -517,7 +391,6 @@ def create_product_entry(
                     COD_ASSETS_SQLITE,
                     ASSET_TAG,
                     PICKUP_NUMBER,
-                    COD_PALLET,
                     QUANTITY,
                     DESCRIPTION,
                     SN,
@@ -533,11 +406,10 @@ def create_product_entry(
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, ?, ?, 0, 0, 0, ?)
                 """,
                 (
-                    cod_assets,
+                    cod_assets_value,
                     cod_assets_sqlite,
                     asset_tag_value or None,
                     pickup_number,
-                    pallet_number,
                     quantity,
                     description,
                     serial,
@@ -575,8 +447,6 @@ _EDITABLE_IASSETS_FIELDS = {
     "ASSET_TAG": (_parse_string_field, None),
     "DESCRIPTION": (_parse_string_field, None),
     "QUANTITY": (_parse_positive_quantity, "Quantity must be a positive integer."),
-    "COD_ASSETS": (_parse_optional_int_field, "COD_ASSETS must be a whole number or left blank."),
-    "COD_ASSETS_SQLITE": (_parse_optional_int_field, "COD_ASSETS_SQLITE must be a whole number or left blank."),
 }
 
 
@@ -584,7 +454,7 @@ def update_iassets_field(
     *,
     row_id: int,
     pickup_number: int,
-    pallet_number: int,
+    cod_assets: int,
     field: str,
     raw_value: str,
 ) -> str:
@@ -606,9 +476,9 @@ def update_iassets_field(
                 FROM IASSETS
                 WHERE COD_IASSETS = ?
                   AND PICKUP_NUMBER = ?
-                  AND IIF(COD_PALLET IS NULL, 0, COD_PALLET) = ?
+                  AND COD_ASSETS = ?
                 """,
-                (row_id, pickup_number, pallet_number),
+                (row_id, pickup_number, cod_assets),
             )
             if not cur.fetchone():
                 raise ValueError("IASSETS entry not found.")

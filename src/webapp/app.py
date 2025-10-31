@@ -247,7 +247,7 @@ async def admin_users(request: Request):
 async def create_pallet_route(
     request: Request,
     pickup_number: int,
-    pallet_number: int = Form(...),
+    cod_assets: int = Form(...),
 ):
     user, redirect_resp = ensure_access(request, allowed_roles=("employee", "supervisor", "admin"))
     if redirect_resp:
@@ -266,14 +266,12 @@ async def create_pallet_route(
 
 
 
-@app.post("/pickups/{pickup_number}/pallets/{pallet_number}/products", response_class=HTMLResponse)
+@app.post("/pickups/{pickup_number}/pallets/{cod_assets}/products", response_class=HTMLResponse)
 async def create_product_route(
     request: Request,
     pickup_number: int,
-    pallet_number: int,
+    cod_assets: int,
     quantity: int = Form(...),
-    cod_assets: Optional[str] = Form(None),
-    cod_assets_sqlite: Optional[str] = Form(None),
     sn: str = Form(""),
     asset_tag: str = Form(""),
     description: str = Form(""),
@@ -286,28 +284,7 @@ async def create_product_route(
     if quantity <= 0:
         set_flash(request, "Quantity must be greater than zero.", "error")
         return RedirectResponse(
-            url=f"/pickups/{pickup_number}/pallets/{pallet_number}",
-            status_code=status.HTTP_302_FOUND,
-        )
-
-    def _parse_optional_int(raw: Optional[str], label: str) -> Optional[int]:
-        if raw is None:
-            return None
-        trimmed = raw.strip()
-        if not trimmed:
-            return None
-        try:
-            return int(trimmed)
-        except ValueError as exc:  # pragma: no cover - defensive
-            raise ValueError(f"{label} must be an integer.") from exc
-
-    try:
-        cod_assets_value = _parse_optional_int(cod_assets, "COD_ASSETS")
-        cod_assets_sqlite_value = _parse_optional_int(cod_assets_sqlite, "COD_ASSETS_SQLITE")
-    except ValueError as exc:
-        set_flash(request, str(exc), "error")
-        return RedirectResponse(
-            url=f"/pickups/{pickup_number}/pallets/{pallet_number}",
+            url=f"/pickups/{pickup_number}/pallets/{cod_assets}",
             status_code=status.HTTP_302_FOUND,
         )
 
@@ -322,7 +299,7 @@ async def create_product_route(
     product.quantity = quantity
     product.pickup = str(pickup_number)
 
-    base_dir = PRODUCT_UPLOAD_DIR / f"pickup_{pickup_number}" / f"pallet_{pallet_number}"
+    base_dir = PRODUCT_UPLOAD_DIR / f"pickup_{pickup_number}" / f"pallet_{cod_assets}"
     staging_dir = base_dir / f"pending_{uuid4().hex}"
     if has_photos:
         staging_dir.mkdir(parents=True, exist_ok=True)
@@ -348,7 +325,7 @@ async def create_product_route(
             if not saved_files:
                 set_flash(request, "Images could not be processed. Please retry.", "error")
                 return RedirectResponse(
-                    url=f"/pickups/{pickup_number}/pallets/{pallet_number}",
+                    url=f"/pickups/{pickup_number}/pallets/{cod_assets}",
                     status_code=status.HTTP_302_FOUND,
                 )
 
@@ -380,14 +357,12 @@ async def create_product_route(
 
         product_id = create_product_entry(
             pickup_number=pickup_number,
-            pallet_number=pallet_number,
+            cod_assets=cod_assets,
             quantity=quantity,
             serial_number=sn_value,
             short_description=llm_short,
             description_raw=description_raw,
             created_by=user["username"],
-            cod_assets=cod_assets_value,
-            cod_assets_sqlite=cod_assets_sqlite_value,
             asset_tag=asset_tag_value,
         )
 
@@ -408,10 +383,9 @@ async def create_product_route(
         metadata = {
             "product_id": product_id,
             "pickup_number": pickup_number,
-            "pallet_number": pallet_number,
             "quantity": quantity,
-            "cod_assets": cod_assets_value,
-            "cod_assets_sqlite": cod_assets_sqlite_value or product_id,
+            "cod_assets": cod_assets,
+            "cod_assets_sqlite": product_id,
             "sn": sn_value,
             "asset_tag": asset_tag_value,
             "description": description_value,
@@ -434,7 +408,7 @@ async def create_product_route(
             message = f"Product #{product_id} stored."
         set_flash(request, message, "success")
     except Exception:
-        logger.exception("Failed to capture product for pickup %s pallet %s", pickup_number, pallet_number)
+        logger.exception("Failed to capture product for pickup %s COD_ASSETS %s", pickup_number, cod_assets)
         if product_id is not None:
             try:
                 delete_product_entry(product_id)
@@ -452,18 +426,18 @@ async def create_product_route(
             shutil.rmtree(base_dir, ignore_errors=True)
 
     return RedirectResponse(
-        url=f"/pickups/{pickup_number}/pallets/{pallet_number}",
+        url=f"/pickups/{pickup_number}/pallets/{cod_assets}",
         status_code=status.HTTP_302_FOUND,
     )
 
 @app.post(
-    "/pickups/{pickup_number}/pallets/{pallet_number}/iassets/{row_id}/update",
+    "/pickups/{pickup_number}/pallets/{cod_assets}/iassets/{row_id}/update",
     response_class=JSONResponse,
 )
 async def update_iassets_field_route(
     request: Request,
     pickup_number: int,
-    pallet_number: int,
+    cod_assets: int,
     row_id: int,
     update: ProductFieldUpdate,
 ):
@@ -475,49 +449,51 @@ async def update_iassets_field_route(
         new_value = update_iassets_field(
             row_id=row_id,
             pickup_number=pickup_number,
-            pallet_number=pallet_number,
+            cod_assets=cod_assets,
             field=update.field,
             raw_value=update.value,
         )
     except ValueError as exc:
         logger.warning(
-            "Failed to update IASSETS row %s (pickup %s pallet %s field %s): %s",
+            "Failed to update IASSETS row %s (pickup %s COD_ASSETS %s field %s): %s",
             row_id,
             pickup_number,
-            pallet_number,
+            cod_assets,
             update.field,
             exc,
         )
         return JSONResponse({"status": "error", "message": str(exc)}, status_code=400)
     except Exception:
         logger.exception(
-            "Unexpected error updating IASSETS row %s (pickup %s pallet %s field %s)",
+            "Unexpected error updating IASSETS row %s (pickup %s COD_ASSETS %s field %s)",
             row_id,
             pickup_number,
-            pallet_number,
+            cod_assets,
             update.field,
         )
         return JSONResponse({"status": "error", "message": "Server error."}, status_code=500)
 
     return JSONResponse({"status": "ok", "value": new_value})
-@app.get("/pickups/{pickup_number}/pallets/{pallet_number}", response_class=HTMLResponse)
+@app.get("/pickups/{pickup_number}/pallets/{cod_assets}", response_class=HTMLResponse)
 async def pallet_detail(
     request: Request,
     pickup_number: int,
-    pallet_number: int,
+    cod_assets: int,
 ):
     allowed = ("viewer", "employee", "supervisor", "admin")
     user, redirect_resp = ensure_access(request, allowed_roles=allowed)
     if redirect_resp:
         return redirect_resp
 
-    items = iassets.fetch_pallet_items(pickup_number, pallet_number)
+    items = iassets.fetch_pallet_items(pickup_number, cod_assets)
+    pallet_display_number: object = cod_assets if cod_assets not in (None, "") else "—"
     flash = consume_flash(request)
     ctx = {
         "request": request,
         "user": user,
         "pickup_number": pickup_number,
-        "pallet_number": pallet_number,
+        "cod_assets": cod_assets,
+        "pallet_display_number": pallet_display_number,
         "items": items,
         "flash": flash,
         "can_edit": user["role"] in ("employee", "supervisor", "admin"),

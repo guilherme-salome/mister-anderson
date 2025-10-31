@@ -27,7 +27,7 @@
     <table>
       <thead>
         <tr>
-          <th>COD_PALLET</th>
+          <th>COD_ASSETS</th>
           <th>TOTAL_ENTRIES</th>
           <th>DT_UPDATE</th>
         </tr>
@@ -35,7 +35,11 @@
       <tbody>
         {% for pallet in pallets %}
           <tr>
-            <td><a href="/pickups/{{ pickup_number }}/pallets/{{ pallet.COD_PALLET }}">{{ pallet.COD_PALLET }}</a></td>
+            <td>
+              <a href="/pickups/{{ pickup_number }}/pallets/{{ pallet.COD_ASSETS | urlencode }}">
+                {{ pallet.COD_ASSETS or '—' }}
+              </a>
+            </td>
             <td>{{ pallet.TOTAL_ENTRIES or 0 }}</td>
             <td>{{ pallet.DT_UPDATE or '—' }}</td>
           </tr>

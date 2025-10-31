@@ -2,12 +2,12 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>Pickup {{ pickup_number }} · Pallet {{ pallet_number }}</title>
+  <title>Pickup {{ pickup_number }} · Pallet {{ pallet_display_number }}</title>
   <link rel="stylesheet" href="{{ url_for('static', path='styles.css') }}">
 </head>
 <body>
   <header class="app-header">
-    <h1>Pickup {{ pickup_number }} · Pallet {{ pallet_number }}</h1>
+    <h1>Pickup {{ pickup_number }} · Pallet {{ pallet_display_number }}</h1>
     <div class="actions">
       <a href="/pickups/{{ pickup_number }}" class="button secondary">Back to Pickup</a>
       <a href="/pickups" class="button secondary">Pickups</a>
@@ -26,13 +26,7 @@
   {% if can_edit %}
   <section class="card">
     <h2>Add Product</h2>
-    <form method="post" action="/pickups/{{ pickup_number }}/pallets/{{ pallet_number }}/products" enctype="multipart/form-data" class="stacked">
-      <label for="cod_assets">COD_ASSETS (optional)</label>
-      <input type="number" id="cod_assets" name="cod_assets" min="0" step="1" placeholder="e.g. 9793">
-
-      <label for="cod_assets_sqlite">COD_ASSETS_SQLITE (optional)</label>
-      <input type="number" id="cod_assets_sqlite" name="cod_assets_sqlite" min="0" step="1" placeholder="Defaults to record ID when blank">
-
+    <form method="post" action="/pickups/{{ pickup_number }}/pallets/{{ cod_assets | urlencode }}/products" enctype="multipart/form-data" class="stacked">
       <label for="sn">SN</label>
       <input type="text" id="sn" name="sn" placeholder="Serial number">
 
@@ -73,8 +67,8 @@
         {% for item in items %}
           <tr data-row-id="{{ item.row_id }}">
             <td>{{ loop.index }}</td>
-            <td class="editable-iassets" data-field="COD_ASSETS">{{ item.COD_ASSETS or '—' }}</td>
-            <td class="editable-iassets" data-field="COD_ASSETS_SQLITE">{{ item.COD_ASSETS_SQLITE or '—' }}</td>
+            <td>{{ item.COD_ASSETS or '—' }}</td>
+            <td>{{ item.COD_ASSETS_SQLITE or '—' }}</td>
             <td class="editable-iassets" data-field="SN">{{ item.SN or '' }}</td>
             <td class="editable-iassets" data-field="ASSET_TAG">{{ item.ASSET_TAG or '' }}</td>
             <td class="editable-iassets" data-field="QUANTITY">{{ item.QUANTITY or 0 }}</td>
@@ -93,11 +87,11 @@
   <script>
     (() => {
       const iassetsTable = document.getElementById('iassets-entries');
-      const pickupNumber = {{ pickup_number }};
-      const palletNumber = {{ pallet_number }};
+      const pickupNumber = {{ pickup_number | tojson }};
+      const palletNumber = {{ cod_assets | tojson }};
       if (!iassetsTable) return;
 
-      const numericFields = new Set(['QUANTITY', 'COD_ASSETS', 'COD_ASSETS_SQLITE']);
+      const numericFields = new Set(['QUANTITY']);
 
       iassetsTable.addEventListener('click', (event) => {
         const cell = event.target.closest('.editable-iassets');
