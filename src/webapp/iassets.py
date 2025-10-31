@@ -212,7 +212,7 @@ def list_pallets(pickup_number: int) -> List[Dict[str, object]]:
             """
             SELECT
                 COD_PALLET AS COD_PALLET,
-                SUM(COALESCE(quantity, 0)) AS QUANTITY,
+                COUNT(*) AS TOTAL_ENTRIES,
                 MAX(COALESCE(dt_update, dt, dt_processed, dt_pickup)) AS DT_UPDATE
             FROM IASSETS
             WHERE pickup_number = ? AND COD_PALLET IS NOT NULL
@@ -225,12 +225,12 @@ def list_pallets(pickup_number: int) -> List[Dict[str, object]]:
             """
             SELECT lp.pallet_number AS COD_PALLET,
                    lp.created_at,
-                   COALESCE(lp2.local_qty, 0) AS local_qty,
-                   COALESCE(lp2.local_dt, lp.created_at) AS local_dt
+                COALESCE(lp2.local_entries, 0) AS local_entries,
+                COALESCE(lp2.local_dt, lp.created_at) AS local_dt
             FROM local_pallets lp
             LEFT JOIN (
                 SELECT pallet_number,
-                       SUM(quantity) AS local_qty,
+                       COUNT(*) AS local_entries,
                        MAX(created_at) AS local_dt
                 FROM local_products
                 WHERE pickup_number = ?
@@ -248,7 +248,7 @@ def list_pallets(pickup_number: int) -> List[Dict[str, object]]:
             continue
         pallets[pallet] = {
             "COD_PALLET": pallet,
-            "QUANTITY": row["QUANTITY"] or 0,
+            "TOTAL_ENTRIES": row["TOTAL_ENTRIES"] or 0,
             "DT_UPDATE": row["DT_UPDATE"],
             "source": "iassets",
         }
@@ -259,7 +259,7 @@ def list_pallets(pickup_number: int) -> List[Dict[str, object]]:
         if entry:
             entry.setdefault("source", "mixed")
             entry.setdefault("created_at", row["created_at"])
-            entry["QUANTITY"] = (entry.get("QUANTITY") or 0) + (row["local_qty"] or 0)
+            entry["TOTAL_ENTRIES"] = (entry.get("TOTAL_ENTRIES") or 0) + (row["local_entries"] or 0)
             local_dt = row["local_dt"]
             if local_dt:
                 current_dt = entry.get("DT_UPDATE")
@@ -268,7 +268,7 @@ def list_pallets(pickup_number: int) -> List[Dict[str, object]]:
         else:
             pallets[pallet] = {
                 "COD_PALLET": pallet,
-                "QUANTITY": row["local_qty"] or 0,
+                "TOTAL_ENTRIES": row["local_entries"] or 0,
                 "DT_UPDATE": row["local_dt"],
                 "source": "local",
             }
