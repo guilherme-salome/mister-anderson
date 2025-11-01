@@ -76,11 +76,7 @@
   {% endif %}
 {% endblock %}
 
-{% block floating_action %}
-  {% if user.role in ("employee", "supervisor", "admin") %}
-    <a href="/pickups?q={{ query or '' }}" class="fab" aria-label="Find pickup">🔍</a>
-  {% endif %}
-{% endblock %}
+{% block floating_action %}{% endblock %}
 
 {% block scripts %}
   {{ super() }}
