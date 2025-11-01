@@ -1,21 +1,48 @@
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <title>Sign In</title>
-  <link rel="stylesheet" href="{{ url_for('static', path='styles.css') }}">
-</head>
-<body class="centered">
-  <div class="card">
-    <h1>Sign In</h1>
-    {% if error %}<div class="alert">{{ error }}</div>{% endif %}
-    <form method="post">
-      <label for="username">Username</label>
-      <input type="text" id="username" name="username" required autofocus autocomplete="username">
-      <label for="password">Password</label>
-      <input type="password" id="password" name="password" required autocomplete="current-password">
-      <button type="submit">Continue</button>
+{% extends "base.html" %}
+
+{% block title %}Sign In{% endblock %}
+
+{% block body_class %}auth-screen{% endblock %}
+
+{% block top_bar %}{% endblock %}
+
+{% block content %}
+  <section class="auth-card">
+    <header class="auth-card__header">
+      <h1>Sign in</h1>
+      <p>Use your warehouse credentials to continue.</p>
+    </header>
+
+    {% if error %}
+      <div class="auth-card__alert" role="alert">{{ error }}</div>
+    {% endif %}
+
+    <form method="post" class="form form--stacked">
+      <div class="form-field">
+        <label for="username">Username</label>
+        <input type="text"
+               id="username"
+               name="username"
+               required
+               autocomplete="username"
+               inputmode="email"
+               autofocus>
+      </div>
+      <div class="form-field">
+        <label for="password">Password</label>
+        <input type="password"
+               id="password"
+               name="password"
+               required
+               autocomplete="current-password">
+      </div>
+      <div class="form-actions form-actions--sticky">
+        <button type="submit" class="button button--primary button--block">Continue</button>
+      </div>
     </form>
-  </div>
-</body>
-</html>
+
+    <footer class="auth-card__footer">
+      <p>Need help? Contact a supervisor to reset your password.</p>
+    </footer>
+  </section>
+{% endblock %}

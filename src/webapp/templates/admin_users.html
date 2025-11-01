@@ -1,124 +1,139 @@
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <title>User Administration</title>
-  <link rel="stylesheet" href="{{ url_for('static', path='styles.css') }}">
-</head>
-<body>
-  <header class="app-header">
-    <h1>User Administration</h1>
-    <div class="actions">
-      <a href="/pickups" class="button secondary">Pickups</a>
-      <a href="/dashboard" class="button secondary">Back to Dashboard</a>
-      <a href="/logout" class="button danger">Logout</a>
+{% extends "base.html" %}
+
+{% block title %}User Administration{% endblock %}
+
+{% block page_heading %}
+  <div class="top-bar__content">
+    <button class="icon-button icon-button--ghost" onclick="window.history.back()" aria-label="Go back">←</button>
+    <div>
+      <h1 class="top-bar__title">User administration</h1>
+      <p class="top-bar__subtitle">Manage access and credentials.</p>
     </div>
-  </header>
+  </div>
+{% endblock %}
 
-  {% if flash %}
-    <div class="alert {{ flash.category }}">{{ flash.message }}</div>
-  {% endif %}
+{% block content %}
+  <nav class="section-tabs" aria-label="Admin sections">
+    <a href="#accounts" class="section-tabs__item">Accounts</a>
+    <a href="#create-user" class="section-tabs__item">Create</a>
+    <a href="#update-role" class="section-tabs__item">Roles</a>
+    <a href="#reset-password" class="section-tabs__item">Reset</a>
+  </nav>
 
-  <section class="table-card">
-    <h2>Accounts</h2>
-    <table>
-      <thead>
-        <tr>
-          <th>ID</th>
-          <th>Username</th>
-          <th>Full name</th>
-          <th>Role</th>
-          <th>Status</th>
-          <th>Created</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for u in users %}
-          <tr>
-            <td>{{ u.id }}</td>
-            <td>{{ u.username }}</td>
-            <td>{{ u.full_name }}</td>
-            <td>{{ u.role|capitalize }}</td>
-            <td>
-              {{ 'Active' if u.is_active else 'Inactive' }}
-              {% if u.id != user.id %}
-                <form method="post" action="/admin/users/status" class="inline" style="margin-top:6px;">
-                  <input type="hidden" name="target_user" value="{{ u.username }}">
-                  <input type="hidden" name="new_status" value="{{ 0 if u.is_active else 1 }}">
-                  <button type="submit" class="button secondary" style="padding:6px 12px;">
-                    {{ 'Deactivate' if u.is_active else 'Activate' }}
-                  </button>
-                </form>
-              {% endif %}
-            </td>
-            <td>{{ u.created_at }}</td>
-          </tr>
-        {% endfor %}
-      </tbody>
-    </table>
+  <section class="card-list" id="accounts">
+    {% for u in users %}
+      <article class="data-card">
+        <header class="data-card__header">
+          <h2 class="data-card__title">{{ u.full_name or u.username }}</h2>
+          <span class="data-card__meta">Created {{ u.created_at }}</span>
+        </header>
+        <dl class="data-card__details">
+          <div>
+            <dt>Username</dt>
+            <dd>{{ u.username }}</dd>
+          </div>
+          <div>
+            <dt>Role</dt>
+            <dd>{{ u.role|capitalize }}</dd>
+          </div>
+          <div>
+            <dt>Status</dt>
+            <dd>{{ 'Active' if u.is_active else 'Inactive' }}</dd>
+          </div>
+        </dl>
+        {% if u.id != user.id %}
+          <footer class="data-card__footer">
+            <form method="post"
+                  action="/admin/users/status"
+                  class="form form--inline">
+              <input type="hidden" name="target_user" value="{{ u.username }}">
+              <input type="hidden" name="new_status" value="{{ 0 if u.is_active else 1 }}">
+              <button type="submit" class="button button--secondary button--block">
+                {{ 'Deactivate' if u.is_active else 'Activate' }}
+              </button>
+            </form>
+          </footer>
+        {% endif %}
+      </article>
+    {% endfor %}
   </section>
 
-  <section class="card" style="margin-top:2rem;">
-    <h2>Create User</h2>
-    <form method="post" action="/admin/users/create" class="inline">
-      <label for="new_username">Username</label>
-      <input type="text" id="new_username" name="new_username" placeholder="e.g. employee1" required autocomplete="username">
-
-      <label for="full_name">Full name</label>
-      <input type="text" id="full_name" name="full_name" placeholder="Full name" required>
-
-      <label for="role">Role</label>
-      <select id="role" name="role" required>
-        {% for role in roles %}
-          <option value="{{ role }}">{{ role|capitalize }}</option>
-        {% endfor %}
-      </select>
-
-      <label for="account_status">Status</label>
-      <select id="account_status" name="account_status" required>
-        <option value="active" selected>Active</option>
-        <option value="inactive">Inactive</option>
-      </select>
-
-      <label for="temp_password">Temporary password</label>
-      <input type="password" id="temp_password" name="temp_password" minlength="8" placeholder="At least 8 characters" required autocomplete="new-password">
-
-      <button type="submit">Create User</button>
+  <section class="card card--inset" id="create-user">
+    <h2 class="section-title">Create user</h2>
+    <form method="post" action="/admin/users/create" class="form form--stacked">
+      <div class="form-field">
+        <label for="new_username">Username</label>
+        <input type="text" id="new_username" name="new_username" placeholder="e.g. employee1" required autocomplete="username">
+      </div>
+      <div class="form-field">
+        <label for="full_name">Full name</label>
+        <input type="text" id="full_name" name="full_name" placeholder="Full name" required>
+      </div>
+      <div class="form-field">
+        <label for="role">Role</label>
+        <select id="role" name="role" required>
+          {% for role in roles %}
+            <option value="{{ role }}">{{ role|capitalize }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="form-field">
+        <label for="account_status">Status</label>
+        <select id="account_status" name="account_status" required>
+          <option value="active" selected>Active</option>
+          <option value="inactive">Inactive</option>
+        </select>
+      </div>
+      <div class="form-field">
+        <label for="temp_password">Temporary password</label>
+        <input type="password" id="temp_password" name="temp_password" minlength="8" placeholder="At least 8 characters" required autocomplete="new-password">
+      </div>
+      <div class="form-actions">
+        <button type="submit" class="button button--primary button--block">Create user</button>
+      </div>
     </form>
   </section>
 
-  <section class="card" style="margin-top:2rem;">
-    <h2>Update Role</h2>
-    <form method="post" action="/admin/users/role" class="inline">
-      <label for="role_username">Username</label>
-      <input type="text" id="role_username" name="role_username" placeholder="e.g. employee1" required>
-
-      <label for="new_role">New role</label>
-      <select id="new_role" name="new_role" required>
-        {% for role in roles %}
-          <option value="{{ role }}">{{ role|capitalize }}</option>
-        {% endfor %}
-      </select>
-
-      <button type="submit">Change Role</button>
+  <section class="card card--inset" id="update-role">
+    <h2 class="section-title">Update role</h2>
+    <form method="post" action="/admin/users/role" class="form form--stacked">
+      <div class="form-field">
+        <label for="role_username">Username</label>
+        <input type="text" id="role_username" name="role_username" placeholder="e.g. employee1" required>
+      </div>
+      <div class="form-field">
+        <label for="new_role">New role</label>
+        <select id="new_role" name="new_role" required>
+          {% for role in roles %}
+            <option value="{{ role }}">{{ role|capitalize }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="form-actions">
+        <button type="submit" class="button button--primary button--block">Change role</button>
+      </div>
     </form>
   </section>
 
-  <section class="card" style="margin-top:2rem;">
-    <h2>Reset Password</h2>
-    <p style="margin-bottom:1rem;">Set a new password (minimum 8 characters) for any user.</p>
-    <form method="post" action="/admin/users/reset" class="inline">
-      <label for="target_username">Username</label>
-      <input type="text" id="target_username" name="target_username" placeholder="e.g. employee1" required autocomplete="username">
-
-      <label for="new_password">New password</label>
-      <input type="password" id="new_password" name="new_password" minlength="8" required autocomplete="new-password">
-
-      <label for="confirm_password">Confirm password</label>
-      <input type="password" id="confirm_password" name="confirm_password" minlength="8" required autocomplete="new-password">
-
-      <button type="submit">Update Password</button>
+  <section class="card card--inset" id="reset-password">
+    <h2 class="section-title">Reset password</h2>
+    <p class="form-help">Set a new password (minimum 8 characters) for any user.</p>
+    <form method="post" action="/admin/users/reset" class="form form--stacked">
+      <div class="form-field">
+        <label for="target_username">Username</label>
+        <input type="text" id="target_username" name="target_username" placeholder="e.g. employee1" required autocomplete="username">
+      </div>
+      <div class="form-field">
+        <label for="new_password">New password</label>
+        <input type="password" id="new_password" name="new_password" minlength="8" required autocomplete="new-password">
+      </div>
+      <div class="form-field">
+        <label for="confirm_password">Confirm password</label>
+        <input type="password" id="confirm_password" name="confirm_password" minlength="8" required autocomplete="new-password">
+      </div>
+      <div class="form-actions">
+        <button type="submit" class="button button--primary button--block">Update password</button>
+      </div>
     </form>
   </section>
-</body>
-</html>
+{% endblock %}

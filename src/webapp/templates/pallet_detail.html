@@ -1,56 +1,39 @@
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <title>Pickup {{ pickup_number }} · Pallet {{ pallet_display_number }}</title>
-  <link rel="stylesheet" href="{{ url_for('static', path='styles.css') }}">
-</head>
-<body>
-  <header class="app-header">
-    <h1>Pickup {{ pickup_number }} · Pallet {{ pallet_display_number }}</h1>
-    <div class="actions">
-      <a href="/pickups/{{ pickup_number }}" class="button secondary">Back to Pickup</a>
-      <a href="/pickups" class="button secondary">Pickups</a>
-      <a href="/dashboard" class="button secondary">Account</a>
-      {% if user.role == 'admin' %}
-        <a href="/admin/users" class="button secondary">Manage Users</a>
-      {% endif %}
-      <a href="/logout" class="button danger">Logout</a>
+{% extends "base.html" %}
+
+{% block title %}Pickup {{ pickup_number }} · Pallet {{ pallet_display_number }}{% endblock %}
+
+{% block page_heading %}
+  <div class="top-bar__content">
+    <button class="icon-button icon-button--ghost" onclick="window.history.back()" aria-label="Go back">←</button>
+    <div>
+      <h1 class="top-bar__title">Pallet {{ pallet_display_number }}</h1>
+      <p class="top-bar__subtitle">Pickup {{ pickup_number }}</p>
     </div>
-  </header>
+  </div>
+{% endblock %}
 
-  {% if flash %}
-    <div class="alert {{ flash.category }}">{{ flash.message }}</div>
-  {% endif %}
-
-  {% if can_edit %}
-  <section class="card">
-    <h2>Add Product</h2>
-    <form method="post" action="/pickups/{{ pickup_number }}/pallets/{{ cod_assets | urlencode }}/products" enctype="multipart/form-data" class="stacked">
-      <label for="sn">SN</label>
-      <input type="text" id="sn" name="sn" placeholder="Serial number">
-
-      <label for="asset_tag">ASSET_TAG</label>
-      <input type="text" id="asset_tag" name="asset_tag" placeholder="Asset tag">
-
-      <label for="quantity">QUANTITY</label>
-      <input type="number" id="quantity" name="quantity" min="1" value="1" required>
-
-      <label for="description">DESCRIPTION</label>
-      <textarea id="description" name="description" rows="3" placeholder="Describe the product"></textarea>
-
-      <label>Photos (optional for AI assistance)</label>
-      <input type="file" name="photos" accept="image/*" capture="environment">
-      <input type="file" name="photos" accept="image/*">
-      <p class="help-text">Upload photos to auto-suggest values. You can review and edit every field before storing the record.</p>
-
-      <button type="submit">Store Product</button>
-    </form>
+{% block content %}
+  <section class="card card--inset">
+    <h2 class="section-title">Pallet summary</h2>
+    <dl class="summary-list">
+      <div>
+        <dt>Pickup number</dt>
+        <dd>{{ pickup_number }}</dd>
+      </div>
+      <div>
+        <dt>COD_PALLET</dt>
+        <dd>{{ pallet_number }}</dd>
+      </div>
+      <div>
+        <dt>Entries recorded</dt>
+        <dd>{{ items|length }}</dd>
+      </div>
+    </dl>
   </section>
-  {% endif %}
 
-  <section class="table-card">
-    <h2>IASSETS Entries</h2>
+  <section class="table-card responsive-table">
+    <h2 class="section-title">IASSETS Entries</h2>
+    <p class="section-lede">Tap a field to edit in place. Changes save automatically.</p>
     <table id="iassets-entries">
       <thead>
         <tr>
@@ -66,13 +49,13 @@
       <tbody>
         {% for item in items %}
           <tr data-row-id="{{ item.row_id }}">
-            <td>{{ loop.index }}</td>
-            <td>{{ item.COD_ASSETS or '—' }}</td>
-            <td>{{ item.COD_ASSETS_SQLITE or '—' }}</td>
-            <td class="editable-iassets" data-field="SN">{{ item.SN or '' }}</td>
-            <td class="editable-iassets" data-field="ASSET_TAG">{{ item.ASSET_TAG or '' }}</td>
-            <td class="editable-iassets" data-field="QUANTITY">{{ item.QUANTITY or 0 }}</td>
-            <td class="editable-iassets" data-field="DESCRIPTION">{{ item.DESCRIPTION or '' }}</td>
+            <td data-label="Index">{{ loop.index }}</td>
+            <td data-label="COD_ASSETS">{{ item.COD_ASSETS or '—' }}</td>
+            <td data-label="COD_ASSETS_SQLITE">{{ item.COD_ASSETS_SQLITE or '—' }}</td>
+            <td class="editable-iassets" data-field="SN" data-label="Serial number">{{ item.SN or '' }}</td>
+            <td class="editable-iassets" data-field="ASSET_TAG" data-label="Asset tag">{{ item.ASSET_TAG or '' }}</td>
+            <td class="editable-iassets" data-field="QUANTITY" data-label="Quantity">{{ item.QUANTITY or 0 }}</td>
+            <td class="editable-iassets" data-field="DESCRIPTION" data-label="Description">{{ item.DESCRIPTION or '' }}</td>
           </tr>
         {% else %}
           <tr>
@@ -84,83 +67,181 @@
   </section>
 
   {% if can_edit %}
-  <script>
-    (() => {
-      const iassetsTable = document.getElementById('iassets-entries');
-      const pickupNumber = {{ pickup_number | tojson }};
-      const palletNumber = {{ cod_assets | tojson }};
-      if (!iassetsTable) return;
+    <div class="bottom-sheet" id="product-sheet" data-sheet data-state="closed">
+      <div class="bottom-sheet__scrim" data-sheet-dismiss></div>
+      <div class="bottom-sheet__panel" role="dialog" aria-modal="true" aria-labelledby="sheet-title" tabindex="-1">
+        <header class="bottom-sheet__header">
+          <h2 id="sheet-title">Add product</h2>
+          <button type="button" class="icon-button icon-button--ghost" data-sheet-dismiss aria-label="Close">✕</button>
+        </header>
+        <form method="post"
+              action="/pickups/{{ pickup_number }}/pallets/{{ pallet_number }}/products"
+              enctype="multipart/form-data"
+              class="form form--stacked">
+          <div class="form-field">
+            <label for="quantity">Quantity</label>
+            <input type="number" id="quantity" name="quantity" min="1" value="1" required inputmode="numeric">
+          </div>
+          <div class="form-field">
+            <label for="sn">Serial number</label>
+            <input type="text" id="sn" name="sn" placeholder="Serial number" autocomplete="off">
+          </div>
+          <div class="form-field">
+            <label for="asset_tag">Asset tag</label>
+            <input type="text" id="asset_tag" name="asset_tag" placeholder="Asset tag" autocomplete="off">
+          </div>
+          <div class="form-field">
+            <label for="description">Description</label>
+            <textarea id="description" name="description" rows="3" placeholder="Describe the product"></textarea>
+          </div>
+          <fieldset class="form-field form-field--group">
+            <legend>Photos</legend>
+            <p class="form-help">Add photos to trigger AI suggestions instantly.</p>
+            <label class="upload-chip">
+              <span>Use camera</span>
+              <input type="file" name="photos" accept="image/*" capture="environment">
+            </label>
+            <label class="upload-chip">
+              <span>Upload from gallery</span>
+              <input type="file" name="photos" accept="image/*" multiple>
+            </label>
+          </fieldset>
+          <div class="form-actions">
+            <button type="submit" class="button button--primary button--block">Store product</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  {% endif %}
+{% endblock %}
 
-      const numericFields = new Set(['QUANTITY']);
+{% block floating_action %}
+  {% if can_edit %}
+    <button class="fab" type="button" data-sheet-open="product-sheet" aria-label="Add product">＋</button>
+  {% endif %}
+{% endblock %}
 
-      iassetsTable.addEventListener('click', (event) => {
-        const cell = event.target.closest('.editable-iassets');
-        if (!cell || cell.dataset.editing === '1') return;
-        const row = cell.closest('tr');
-        if (!row) return;
-        const rowId = row.dataset.rowId;
-        const field = cell.dataset.field;
-        if (!rowId || !field) return;
+{% block scripts %}
+  {{ super() }}
+  {% if can_edit %}
+    <script>
+      (() => {
+        const sheet = document.querySelector('[data-sheet]');
+        if (!sheet) return;
 
-        const originalText = cell.textContent.trim();
-        const displayValue = originalText === '—' ? '' : originalText;
-        const input = document.createElement('input');
-        input.type = numericFields.has(field) ? 'number' : 'text';
-        if (field === 'QUANTITY') input.min = '1';
-        input.value = displayValue;
+        const panel = sheet.querySelector('.bottom-sheet__panel');
 
-        cell.dataset.editing = '1';
-        cell.textContent = '';
-        cell.appendChild(input);
-        input.focus();
-        input.select();
-
-        const commit = async () => {
-          const value = input.value.trim();
-          try {
-            const response = await fetch(
-              `/pickups/${pickupNumber}/pallets/${palletNumber}/iassets/${rowId}/update`,
-              {
-                method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                  'Accept': 'application/json',
-                },
-                credentials: 'same-origin',
-                body: JSON.stringify({ field, value }),
-              }
-            );
-            const data = await response.json();
-            console.debug('IASSETS update response', response.status, data);
-            if (!response.ok || data.status !== 'ok') {
-              alert(data.message || 'Unable to save change.');
-              cell.textContent = originalText;
-            } else {
-              cell.textContent = data.value === '' ? '—' : data.value;
-            }
-          } catch (error) {
-            console.error(error);
-            alert('Network error while saving change.');
-            cell.textContent = originalText;
-          } finally {
-            cell.dataset.editing = '0';
-          }
+        const openSheet = () => {
+          sheet.dataset.state = 'open';
+          panel.focus({ preventScroll: false });
+          document.body.classList.add('sheet-open');
         };
 
-        input.addEventListener('blur', commit);
-        input.addEventListener('keydown', (e) => {
-          if (e.key === 'Enter') {
-            e.preventDefault();
-            input.blur();
-          } else if (e.key === 'Escape') {
-            cell.textContent = originalText;
-            cell.dataset.editing = '0';
+        const closeSheet = () => {
+          sheet.dataset.state = 'closed';
+          document.body.classList.remove('sheet-open');
+        };
+
+        sheet.querySelectorAll('[data-sheet-dismiss]').forEach((btn) => {
+          btn.addEventListener('click', closeSheet);
+        });
+
+        document.querySelectorAll('[data-sheet-open="product-sheet"]').forEach((trigger) => {
+          trigger.addEventListener('click', openSheet);
+        });
+
+        sheet.addEventListener('click', (event) => {
+          if (event.target === sheet || event.target === sheet.querySelector('.bottom-sheet__scrim')) {
+            closeSheet();
           }
         });
-      });
 
-    })();
-  </script>
+        document.addEventListener('keydown', (event) => {
+          if (event.key === 'Escape' && sheet.dataset.state === 'open') {
+            closeSheet();
+          }
+        });
+      })();
+    </script>
   {% endif %}
-</body>
-</html>
+
+  {% if can_edit %}
+    <script>
+      (() => {
+        const iassetsTable = document.getElementById('iassets-entries');
+        const pickupNumber = {{ pickup_number }};
+        const palletNumber = {{ pallet_number }};
+        if (!iassetsTable) return;
+
+        const numericFields = new Set(['QUANTITY']);
+
+        iassetsTable.addEventListener('click', (event) => {
+          const cell = event.target.closest('.editable-iassets');
+          if (!cell || cell.dataset.editing === '1') return;
+          const row = cell.closest('tr');
+          if (!row) return;
+          const rowId = row.dataset.rowId;
+          const field = cell.dataset.field;
+          if (!rowId || !field) return;
+
+          const originalText = cell.textContent.trim();
+          const displayValue = originalText === '—' ? '' : originalText;
+          const input = document.createElement('input');
+          input.type = numericFields.has(field) ? 'number' : 'text';
+          if (field === 'QUANTITY') input.min = '1';
+          input.value = displayValue;
+
+          cell.dataset.editing = '1';
+          cell.textContent = '';
+          cell.appendChild(input);
+          input.focus({ preventScroll: false });
+          input.select();
+
+          const commit = async () => {
+            const value = input.value.trim();
+            try {
+              const response = await fetch(
+                `/pickups/${pickupNumber}/pallets/${palletNumber}/iassets/${rowId}/update`,
+                {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json',
+                  },
+                  credentials: 'same-origin',
+                  body: JSON.stringify({ field, value }),
+                }
+              );
+              const data = await response.json();
+              console.debug('IASSETS update response', response.status, data);
+              if (!response.ok || data.status !== 'ok') {
+                alert(data.message || 'Unable to save change.');
+                cell.textContent = originalText;
+              } else {
+                cell.textContent = data.value === '' ? '—' : data.value;
+              }
+            } catch (error) {
+              console.error(error);
+              alert('Network error while saving change.');
+              cell.textContent = originalText;
+            } finally {
+              cell.dataset.editing = '0';
+            }
+          };
+
+          input.addEventListener('blur', commit);
+          input.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              input.blur();
+            } else if (e.key === 'Escape') {
+              cell.textContent = originalText;
+              cell.dataset.editing = '0';
+            }
+          });
+        });
+
+      })();
+    </script>
+  {% endif %}
+{% endblock %}

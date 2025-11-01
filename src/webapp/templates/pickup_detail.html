@@ -1,55 +1,61 @@
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <title>Pickup {{ pickup_number }}</title>
-  <link rel="stylesheet" href="{{ url_for('static', path='styles.css') }}">
-</head>
-<body>
-  <header class="app-header">
-    <h1>Pickup {{ pickup_number }}</h1>
-    <div class="actions">
-      <a href="/pickups" class="button secondary">Pickups</a>
-      <a href="/dashboard" class="button secondary">Account</a>
-      {% if user.role == 'admin' %}
-        <a href="/admin/users" class="button secondary">Manage Users</a>
-      {% endif %}
-      <a href="/logout" class="button danger">Logout</a>
+{% extends "base.html" %}
+
+{% block title %}Pickup {{ pickup_number }}{% endblock %}
+
+{% block page_heading %}
+  <div class="top-bar__content">
+    <button class="icon-button icon-button--ghost" onclick="window.history.back()" aria-label="Go back">←</button>
+    <div>
+      <h1 class="top-bar__title">Pickup {{ pickup_number }}</h1>
+      <p class="top-bar__subtitle">{{ pallets|length }} pallet{{ '' if pallets|length == 1 else 's' }} tracked</p>
     </div>
-  </header>
+  </div>
+{% endblock %}
 
-  {% if flash %}
-    <div class="alert {{ flash.category }}">{{ flash.message }}</div>
-  {% endif %}
-
-  <section class="table-card">
-    <h2>Pallets</h2>
-    <table>
-      <thead>
-        <tr>
-          <th>COD_ASSETS</th>
-          <th>TOTAL_ENTRIES</th>
-          <th>DT_UPDATE</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for pallet in pallets %}
-          <tr>
-            <td>
-              <a href="/pickups/{{ pickup_number }}/pallets/{{ pallet.COD_ASSETS | urlencode }}">
-                {{ pallet.COD_ASSETS or '—' }}
-              </a>
-            </td>
-            <td>{{ pallet.TOTAL_ENTRIES or 0 }}</td>
-            <td>{{ pallet.DT_UPDATE or '—' }}</td>
-          </tr>
-        {% else %}
-          <tr>
-            <td colspan="3" style="text-align:center;">No pallets found. Pallets must be created in the external workflow before products can be captured.</td>
-          </tr>
-        {% endfor %}
-      </tbody>
-    </table>
+{% block content %}
+  <section class="card card--inset">
+    <h2 class="section-title">Pallet overview</h2>
+    <p class="section-lede">
+      Select a pallet to open its product capture workspace. Pallets are created in the external workflow and sync automatically.
+    </p>
   </section>
-</body>
-</html>
+
+  <section class="card-list">
+    {% for pallet in pallets %}
+      <article class="data-card">
+        <header class="data-card__header">
+          <h2 class="data-card__title">
+            Pallet <span>{{ pallet.COD_ASSETS or 'Unassigned' }}</span>
+          </h2>
+          <span class="data-card__meta">
+            Updated {{ pallet.DT_UPDATE or "—" }}
+          </span>
+        </header>
+        <dl class="data-card__details">
+          <div>
+            <dt>Total entries</dt>
+            <dd>{{ pallet.TOTAL_ENTRIES or 0 }}</dd>
+          </div>
+        </dl>
+        <footer class="data-card__footer">
+          <a class="button button--secondary button--block"
+             href="/pickups/{{ pickup_number }}/pallets/{{ pallet.COD_ASSETS | urlencode }}">
+            Open pallet
+          </a>
+        </footer>
+      </article>
+    {% else %}
+      <p class="empty-state">
+        No pallets found. Pallets must be created in the external workflow before products can be captured.
+      </p>
+    {% endfor %}
+  </section>
+{% endblock %}
+
+{% block floating_action %}
+  {% if can_edit %}
+    <button class="fab fab--info" type="button" onclick="alert('Create pallets via the external workflow.')" aria-label="Pallet guidance">
+      ℹ️
+    </button>
+  {% endif %}
+{% endblock %}

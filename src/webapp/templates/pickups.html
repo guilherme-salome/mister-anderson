@@ -1,81 +1,87 @@
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <title>Pickups</title>
-  <link rel="stylesheet" href="{{ url_for('static', path='styles.css') }}">
-</head>
-<body>
-  <header class="app-header">
-    <h1>Pickups</h1>
-    <div class="actions">
-      <a href="/pickups" class="button secondary">Pickups</a>
-      <a href="/dashboard" class="button secondary">Account</a>
-      {% if user.role == 'admin' %}
-        <a href="/admin/users" class="button secondary">Manage Users</a>
-      {% endif %}
-      <a href="/logout" class="button danger">Logout</a>
-    </div>
-  </header>
+{% extends "base.html" %}
 
-  {% if flash %}
-    <div class="alert {{ flash.category }}">{{ flash.message }}</div>
-  {% endif %}
+{% block title %}Pickups{% endblock %}
 
-  <section class="card">
-    <p>Recent pickup numbers. Select one to view pallet entries and product descriptions.</p>
-    <form method="get" action="/pickups" class="inline">
-      <label for="pickup_query">Find pickup</label>
-      <input type="number" id="pickup_query" name="q" value="{{ query or '' }}" placeholder="Enter pickup number">
-      <button type="submit">Search</button>
-      {% if query %}
-        <a href="/pickups" class="button secondary" style="padding:10px 16px;">Clear</a>
-      {% endif %}
+{% block page_heading %}
+  <div class="top-bar__content">
+    <h1 class="top-bar__title">Pickups</h1>
+    <p class="top-bar__subtitle">Search and review pickup numbers on the floor.</p>
+  </div>
+{% endblock %}
+
+{% block content %}
+  <section class="card card--inset">
+    <p class="section-lede">Search for a pickup number to review pallets or continue capturing products.</p>
+    <form method="get" action="/pickups" class="form form--stacked">
+      <div class="form-field">
+        <label for="pickup_query">Pickup number</label>
+        <input type="number"
+               id="pickup_query"
+               name="q"
+               value="{{ query or '' }}"
+               placeholder="Enter pickup number"
+               inputmode="numeric">
+      </div>
+      <div class="form-actions">
+        <button type="submit" class="button button--primary button--block">Search</button>
+        {% if query %}
+          <a href="/pickups" class="button button--secondary button--block">Clear</a>
+        {% endif %}
+      </div>
     </form>
-    <p style="margin-top:1.5rem; color:#4a5568;">
-      Pickup creation is managed outside the web app. Search for an existing pickup to review its pallets and add product entries.
+    <p class="form-help">
+      Pickup creation remains in the external workflow. Use this list to review pallets and add products.
     </p>
   </section>
 
-  <section class="table-card">
-    <table>
-      <thead>
-        <tr>
-          <th>PICKUP_NUMBER</th>
-          <th class="tooltip" data-tooltip="Calculated on the fly">TOTAL_PALLETS</th>
-          <th>DT_UPDATE</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for p in pickups %}
-          <tr>
-            <td><a href="/pickups/{{ p.PICKUP_NUMBER }}">{{ p.PICKUP_NUMBER }}</a></td>
-            <td>{{ p.TOTAL_PALLETS or 0 }}</td>
-            <td>{{ p.DT_UPDATE or '—' }}</td>
-          </tr>
-        {% else %}
-          <tr>
-            <td colspan="3" style="text-align:center;">No pickup data available.</td>
-          </tr>
-        {% endfor %}
-      </tbody>
-    </table>
+  <section class="card-list">
+    {% for p in pickups %}
+      <article class="data-card">
+        <header class="data-card__header">
+          <h2 class="data-card__title">Pickup <span>#{{ p.PICKUP_NUMBER }}</span></h2>
+          <span class="data-card__meta">Updated {{ p.DT_UPDATE or "—" }}</span>
+        </header>
+        <dl class="data-card__details">
+          <div>
+            <dt>Total pallets</dt>
+            <dd>{{ p.TOTAL_PALLETS or 0 }}</dd>
+          </div>
+        </dl>
+        <footer class="data-card__footer">
+          <a class="button button--secondary button--block" href="/pickups/{{ p.PICKUP_NUMBER }}">
+            Open pickup
+          </a>
+        </footer>
+      </article>
+    {% else %}
+      <p class="empty-state">No pickup data available.</p>
+    {% endfor %}
   </section>
+  {% if total_pages > 1 %}
+    <nav class="pagination-bar" aria-label="Pagination">
+      {% if has_prev %}
+        <a href="/pickups?page={{ page - 1 }}{% if query %}&amp;q={{ query }}{% endif %}" class="pagination-bar__button">‹ Prev</a>
+      {% else %}
+        <span class="pagination-bar__button is-disabled">‹ Prev</span>
+      {% endif %}
 
-  <nav class="pagination">
-    {% if has_prev %}
-      <a href="/pickups?page={{ page - 1 }}{% if query %}&q={{ query }}{% endif %}" class="button secondary">&larr; Previous</a>
-    {% else %}
-      <span class="button disabled">&larr; Previous</span>
-    {% endif %}
+      <span class="pagination-bar__info">Page {{ page }} of {{ total_pages }}</span>
 
-    <span class="page-info">Page {{ page }} of {{ total_pages }}</span>
+      {% if has_next %}
+        <a href="/pickups?page={{ page + 1 }}{% if query %}&amp;q={{ query }}{% endif %}" class="pagination-bar__button">Next ›</a>
+      {% else %}
+        <span class="pagination-bar__button is-disabled">Next ›</span>
+      {% endif %}
+    </nav>
+  {% endif %}
+{% endblock %}
 
-    {% if has_next %}
-      <a href="/pickups?page={{ page + 1 }}{% if query %}&q={{ query }}{% endif %}" class="button secondary">Next &rarr;</a>
-    {% else %}
-      <span class="button disabled">Next &rarr;</span>
-    {% endif %}
-  </nav>
-</body>
-</html>
+{% block floating_action %}
+  {% if user.role in ("employee", "supervisor", "admin") %}
+    <a href="/pickups?q={{ query or '' }}" class="fab" aria-label="Find pickup">🔍</a>
+  {% endif %}
+{% endblock %}
+
+{% block scripts %}
+  {{ super() }}
+{% endblock %}

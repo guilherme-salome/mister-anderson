@@ -1,40 +1,55 @@
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <title>Dashboard</title>
-  <link rel="stylesheet" href="{{ url_for('static', path='styles.css') }}">
-</head>
-<body>
-  <header class="app-header">
-    <h1>Welcome</h1>
-    <div class="actions">
-      <a href="/pickups" class="button secondary">Pickups</a>
-      {% if user.role == "admin" %}
-        <a href="/admin/users" class="button secondary">Manage Users</a>
-      {% endif %}
-      <a href="/logout" class="button danger">Logout</a>
-    </div>
-  </header>
+{% extends "base.html" %}
 
-  {% if flash %}
-    <div class="alert {{ flash.category }}">{{ flash.message }}</div>
-  {% endif %}
+{% block title %}Dashboard{% endblock %}
 
-  <section class="card">
-    <h2>Account</h2>
-    <dl>
-      <dt>User ID</dt>
-      <dd>{{ user.id }}</dd>
-      <dt>Username</dt>
-      <dd>{{ user.username }}</dd>
-      <dt>Full Name</dt>
-      <dd>{{ user.full_name }}</dd>
-      <dt>Account Type</dt>
-      <dd>{{ role_label }}</dd>
-      <dt>Status</dt>
-      <dd>{{ "Active" if user.is_active else "Inactive" }}</dd>
-    </dl>
+{% block page_heading %}
+  <div class="top-bar__content">
+    <h1 class="top-bar__title">Dashboard</h1>
+    <p class="top-bar__subtitle">Welcome back, {{ user.full_name or user.username }}.</p>
+  </div>
+{% endblock %}
+
+{% block content %}
+  <section class="card-grid">
+    <article class="info-card">
+      <header class="info-card__header">
+        <span class="info-card__eyebrow">Account</span>
+        <h2 class="info-card__title">{{ role_label }}</h2>
+      </header>
+      <dl class="info-card__details">
+        <div>
+          <dt>User ID</dt>
+          <dd>{{ user.id }}</dd>
+        </div>
+        <div>
+          <dt>Username</dt>
+          <dd>{{ user.username }}</dd>
+        </div>
+        <div>
+          <dt>Status</dt>
+          <dd>{{ "Active" if user.is_active else "Inactive" }}</dd>
+        </div>
+      </dl>
+    </article>
+
+    <article class="info-card">
+      <header class="info-card__header">
+        <span class="info-card__eyebrow">Next steps</span>
+        <h2 class="info-card__title">Workflow shortcuts</h2>
+      </header>
+      <ul class="quick-actions">
+        <li><a href="/pickups" class="chip-link">Review pickups ↗</a></li>
+        <li><a href="/pickups?q=" class="chip-link">Find pickup by number ↗</a></li>
+        {% if user.role in ("employee", "supervisor", "admin") %}
+          <li><span>Capture new pallet via Telegram bot</span></li>
+        {% endif %}
+      </ul>
+    </article>
   </section>
-</body>
-</html>
+{% endblock %}
+
+{% block floating_action %}
+  {% if user.role in ("employee", "supervisor", "admin") %}
+    <a href="/pickups" class="fab" aria-label="Review pickups">➕</a>
+  {% endif %}
+{% endblock %}

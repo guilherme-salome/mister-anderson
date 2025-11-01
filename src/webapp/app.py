@@ -158,6 +158,7 @@ async def dashboard(request: Request):
         "request": request,
         "user": user,
         "role_label": ROLE_LABELS.get(user["role"], user["role"]),
+        "active_page": "dashboard",
     }
     flash = consume_flash(request)
     if flash:
@@ -188,6 +189,7 @@ async def pickups_overview(request: Request, page: int = 1, q: Optional[int] = N
         "has_prev": page > 1,
         "has_next": page < total_pages,
         "query": q,
+        "active_page": "pickups",
     }
     return templates.TemplateResponse("pickups.html", ctx)
 
@@ -223,6 +225,7 @@ async def pickup_detail(request: Request, pickup_number: int):
         "pallets": pallets,
         "flash": flash,
         "can_edit": user["role"] in ("employee", "supervisor", "admin"),
+        "active_page": "pickups",
     }
     return templates.TemplateResponse("pickup_detail.html", ctx)
 
@@ -239,6 +242,7 @@ async def admin_users(request: Request):
         "users": list(list_users()),
         "roles": ALLOWED_ROLES,
         "flash": consume_flash(request),
+        "active_page": "admin",
     }
     return templates.TemplateResponse("admin_users.html", ctx)
 
@@ -493,10 +497,12 @@ async def pallet_detail(
         "user": user,
         "pickup_number": pickup_number,
         "cod_assets": cod_assets,
+        "pallet_number": cod_assets,
         "pallet_display_number": pallet_display_number,
         "items": items,
         "flash": flash,
         "can_edit": user["role"] in ("employee", "supervisor", "admin"),
+        "active_page": "pickups",
     }
     return templates.TemplateResponse("pallet_detail.html", ctx)
 
