@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>{% block title %}Mister Anderson{% endblock %}</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="{{ url_for('static', path='styles.css') }}">
+  {% block head_extra %}{% endblock %}
+</head>
+<body class="app-body {% block body_class %}{% endblock %}">
+  <div class="app-shell">
+    <header class="top-bar">
+      {% block top_bar %}
+        <div class="top-bar__content">
+          {% block page_heading %}<h1 class="top-bar__title">Mister Anderson</h1>{% endblock %}
+          {% block top_bar_actions %}{% endblock %}
+        </div>
+      {% endblock %}
+    </header>
+
+    <main class="main-content">
+      {% block content %}{% endblock %}
+    </main>
+  </div>
+
+  {% block floating_action %}{% endblock %}
+
+  {% if user %}
+    <nav class="bottom-nav" aria-label="Primary">
+      <a href="/pickups" class="bottom-nav__item {% if active_page == 'pickups' %}is-active{% endif %}">
+        <span class="bottom-nav__icon" aria-hidden="true">📦</span>
+        <span class="bottom-nav__label">Pickups</span>
+      </a>
+      <a href="/dashboard" class="bottom-nav__item {% if active_page == 'dashboard' %}is-active{% endif %}">
+        <span class="bottom-nav__icon" aria-hidden="true">👤</span>
+        <span class="bottom-nav__label">Account</span>
+      </a>
+      {% if user.role == 'admin' %}
+        <a href="/admin/users" class="bottom-nav__item {% if active_page == 'admin' %}is-active{% endif %}">
+          <span class="bottom-nav__icon" aria-hidden="true">🛠️</span>
+          <span class="bottom-nav__label">Admin</span>
+        </a>
+      {% endif %}
+      <a href="/logout" class="bottom-nav__item">
+        <span class="bottom-nav__icon" aria-hidden="true">🚪</span>
+        <span class="bottom-nav__label">Logout</span>
+      </a>
+    </nav>
+  {% endif %}
+
+  {% if flash %}
+    <div class="toast toast--{{ flash.category }}" role="status" aria-live="polite">
+      {{ flash.message }}
+    </div>
+  {% endif %}
+
+  {% block scripts %}{% endblock %}
+</body>
+</html>
