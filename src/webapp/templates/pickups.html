@@ -23,7 +23,7 @@
                inputmode="numeric">
       </div>
       <div class="form-actions">
-        <button type="submit" class="button button--primary button--block">Search</button>
+        <button type="submit" class="button button--primary button--block" id="pickup-search-button">Search</button>
         {% if query %}
           <a href="/pickups" class="button button--secondary button--block">Clear</a>
         {% endif %}
@@ -80,4 +80,17 @@
 
 {% block scripts %}
   {{ super() }}
+  <script>
+    (() => {
+      const form = document.querySelector('form[action="/pickups"]');
+      if (!form) return;
+      const input = form.querySelector('#pickup_query');
+      form.addEventListener('submit', (event) => {
+        if (!input) return;
+        if (!input.value.trim()) {
+          event.preventDefault();
+        }
+      });
+    })();
+  </script>
 {% endblock %}
