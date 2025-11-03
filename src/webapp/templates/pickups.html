@@ -11,7 +11,7 @@
 
 {% block content %}
   <section class="card card--inset">
-    <p class="section-lede">Search for a pickup number to review pallets or continue capturing products.</p>
+    <p class="section-lede">Search for a pickup number to jump straight into its pallets.</p>
     <form method="get" action="/pickups" class="form form--stacked">
       <div class="form-field">
         <label for="pickup_query">Pickup number</label>
@@ -30,50 +30,10 @@
       </div>
     </form>
     <p class="form-help">
-      Pickup creation remains in the external workflow. Use this list to review pallets and add products.
+      Pickup creation remains in the external workflow. Use the search to review pallets and add products.
     </p>
   </section>
 
-  <section class="card-list">
-    {% for p in pickups %}
-      <article class="data-card">
-        <header class="data-card__header">
-          <h2 class="data-card__title">Pickup <span>#{{ p.PICKUP_NUMBER }}</span></h2>
-          <span class="data-card__meta">Updated {{ p.DT_UPDATE or "—" }}</span>
-        </header>
-        <dl class="data-card__details">
-          <div>
-            <dt>Total pallets</dt>
-            <dd>{{ p.TOTAL_PALLETS or 0 }}</dd>
-          </div>
-        </dl>
-        <footer class="data-card__footer">
-          <a class="button button--secondary button--block" href="/pickups/{{ p.PICKUP_NUMBER }}">
-            Open pickup
-          </a>
-        </footer>
-      </article>
-    {% else %}
-      <p class="empty-state">No pickup data available.</p>
-    {% endfor %}
-  </section>
-  {% if total_pages > 1 %}
-    <nav class="pagination-bar" aria-label="Pagination">
-      {% if has_prev %}
-        <a href="/pickups?page={{ page - 1 }}{% if query %}&amp;q={{ query }}{% endif %}" class="pagination-bar__button">‹ Prev</a>
-      {% else %}
-        <span class="pagination-bar__button is-disabled">‹ Prev</span>
-      {% endif %}
-
-      <span class="pagination-bar__info">Page {{ page }} of {{ total_pages }}</span>
-
-      {% if has_next %}
-        <a href="/pickups?page={{ page + 1 }}{% if query %}&amp;q={{ query }}{% endif %}" class="pagination-bar__button">Next ›</a>
-      {% else %}
-        <span class="pagination-bar__button is-disabled">Next ›</span>
-      {% endif %}
-    </nav>
-  {% endif %}
 {% endblock %}
 
 {% block floating_action %}{% endblock %}
