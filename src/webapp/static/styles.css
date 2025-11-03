@@ -229,6 +229,18 @@ a {
   z-index: 90;
 }
 
+.toast.toast--transient {
+  opacity: 0;
+  transform: translate(-50%, 12px);
+  transition: opacity 180ms ease, transform 180ms ease;
+  pointer-events: none;
+}
+
+.toast.toast--transient.is-active {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
 .toast--error {
   border-color: rgba(248, 113, 113, 0.6);
   color: #fecaca;

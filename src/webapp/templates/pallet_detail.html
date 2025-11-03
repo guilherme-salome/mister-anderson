@@ -173,6 +173,49 @@
         const palletNumber = {{ pallet_number }};
         if (!iassetsTable) return;
 
+        const showToast = (() => {
+          let activeToast = null;
+          let dismissTimer = null;
+
+          const removeToast = (toast) => {
+            if (!toast) return;
+            toast.classList.remove('is-active');
+            window.setTimeout(() => {
+              if (toast.parentElement) {
+                toast.parentElement.removeChild(toast);
+              }
+              if (activeToast === toast) {
+                activeToast = null;
+              }
+            }, 220);
+          };
+
+          return (message, category = 'success', duration = 2200) => {
+            if (dismissTimer) {
+              window.clearTimeout(dismissTimer);
+              dismissTimer = null;
+            }
+            removeToast(activeToast);
+
+            const toast = document.createElement('div');
+            toast.className = `toast toast--${category} toast--transient`;
+            toast.setAttribute('role', 'status');
+            toast.setAttribute('aria-live', 'polite');
+            toast.textContent = message;
+            document.body.appendChild(toast);
+
+            window.requestAnimationFrame(() => {
+              toast.classList.add('is-active');
+            });
+
+            activeToast = toast;
+            dismissTimer = window.setTimeout(() => {
+              removeToast(toast);
+              dismissTimer = null;
+            }, duration);
+          };
+        })();
+
         const numericFields = new Set(['QUANTITY']);
 
         iassetsTable.addEventListener('click', (event) => {
@@ -183,6 +226,7 @@
           const rowId = row.dataset.rowId;
           const field = cell.dataset.field;
           if (!rowId || !field) return;
+          const label = cell.dataset.label || field;
 
           const originalText = cell.textContent.trim();
           const displayValue = originalText === '—' ? '' : originalText;
@@ -197,7 +241,27 @@
           input.focus({ preventScroll: false });
           input.select();
 
+          let hasCommitted = false;
+
+          const handlePointerDown = (pointerEvent) => {
+            if (pointerEvent.target === input) return;
+            if (pointerEvent.target.closest('.editable-iassets') === cell) return;
+            commit();
+          };
+
+          const cleanup = () => {
+            document.removeEventListener('pointerdown', handlePointerDown, true);
+          };
+
           const commit = async () => {
+            if (hasCommitted) return;
+            hasCommitted = true;
+            cleanup();
+            if (document.activeElement === input) {
+              input.blur();
+            }
+            input.disabled = true;
+
             const value = input.value.trim();
             try {
               const response = await fetch(
@@ -218,7 +282,10 @@
                 alert(data.message || 'Unable to save change.');
                 cell.textContent = originalText;
               } else {
-                cell.textContent = data.value === '' ? '—' : data.value;
+                const returnedValue = data.value ?? '';
+                const renderedValue = returnedValue === '' ? '—' : returnedValue;
+                cell.textContent = renderedValue;
+                showToast(`${label} updated`, 'success');
               }
             } catch (error) {
               console.error(error);
@@ -229,12 +296,18 @@
             }
           };
 
+          document.addEventListener('pointerdown', handlePointerDown, true);
           input.addEventListener('blur', commit);
           input.addEventListener('keydown', (e) => {
             if (e.key === 'Enter') {
               e.preventDefault();
-              input.blur();
+              commit();
             } else if (e.key === 'Escape') {
+              cleanup();
+              hasCommitted = true;
+              if (document.activeElement === input) {
+                input.blur();
+              }
               cell.textContent = originalText;
               cell.dataset.editing = '0';
             }
