@@ -7,7 +7,7 @@ import shutil
 import sqlite3
 from datetime import datetime
 from pathlib import Path
-from typing import Iterable, Optional, List
+from typing import Iterable, Optional, List, Tuple
 from uuid import uuid4
 
 from pydantic import BaseModel
@@ -39,6 +39,19 @@ from .iassets import (
 )
 from ..product import Product
 from ..llm import process_product_folder
+from .uploads import (
+    ANALYSIS_FILENAME,
+    AnalysisPayload,
+    begin_session,
+    cleanup_session,
+    is_valid_session_id,
+    iter_session_files,
+    load_analysis,
+    persist_bytes,
+    session_dir_for,
+    validate_uploads,
+    write_analysis,
+)
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(
@@ -295,6 +308,7 @@ async def create_product_route(
     description: str = Form(""),
     subcategory: str = Form(""),
     cod_destiny: str = Form(""),
+    upload_session_id: str = Form(""),
     photos: Optional[List[UploadFile]] = File(None),
 ):
     user, redirect_resp = ensure_access(request, allowed_roles=("employee", "supervisor", "admin"))
@@ -329,34 +343,77 @@ async def create_product_route(
     cod_destiny_input = (cod_destiny or "").strip()
 
     valid_files = [upload for upload in (photos or []) if upload and upload.filename]
-    has_photos = bool(valid_files)
+    session_id_raw = (upload_session_id or "").strip()
+
+    base_dir = PRODUCT_UPLOAD_DIR / f"pickup_{pickup_number}" / f"pallet_{cod_assets}"
+    session_dir = None
+    analysis_payload: Optional[AnalysisPayload] = None
+    using_session = False
+    session_files: List[Path] = []
+
+    if session_id_raw:
+        if not is_valid_session_id(session_id_raw):
+            set_flash(request, "Photo session token was invalid. Please re-upload your images.", "error")
+            return RedirectResponse(url=redirect_url, status_code=status.HTTP_302_FOUND)
+        candidate_dir = session_dir_for(base_dir, session_id_raw)
+        if not candidate_dir.exists():
+            set_flash(request, "Photo session expired. Please re-upload your images.", "error")
+            return RedirectResponse(url=redirect_url, status_code=status.HTTP_302_FOUND)
+        session_files = iter_session_files(candidate_dir)
+        if not session_files:
+            set_flash(request, "Photo session expired. Please re-upload your images.", "error")
+            return RedirectResponse(url=redirect_url, status_code=status.HTTP_302_FOUND)
+        analysis_payload = load_analysis(candidate_dir)
+        session_dir = candidate_dir
+        using_session = True
+
+    if using_session and valid_files:
+        set_flash(
+            request,
+            "Photos were already analyzed. Refresh the page or clear the session before attaching new images.",
+            "error",
+        )
+        return RedirectResponse(url=redirect_url, status_code=status.HTTP_302_FOUND)
+
+    has_photos = bool(valid_files) or using_session
 
     product = Product(created_by=user["username"])
     product.quantity = quantity
     product.pickup = str(pickup_number)
 
-    base_dir = PRODUCT_UPLOAD_DIR / f"pickup_{pickup_number}" / f"pallet_{cod_assets}"
-    staging_dir = base_dir / f"pending_{uuid4().hex}"
-    if has_photos:
+    staging_dir = session_dir if using_session else base_dir / f"pending_{uuid4().hex}"
+    if has_photos and not using_session:
         staging_dir.mkdir(parents=True, exist_ok=True)
 
     saved_files: List[str] = []
     product_id = None
     final_photo_paths: List[str] = []
     try:
-        if has_photos:
+        if using_session:
+            saved_files = [path.name for path in session_files]
+            if analysis_payload:
+                product.description_json = analysis_payload.description_json
+                product.description_raw = analysis_payload.description_raw
+            else:
+                product.description_json = {}
+                product.description_raw = ""
+        elif has_photos:
+            file_payloads: List[Tuple[str, bytes]] = []
             for upload in valid_files:
                 contents = await upload.read()
-                suffix = Path(upload.filename).suffix or ".jpg"
-                filename = f"{uuid4().hex}{suffix}"
-                temp_path = Path(product.tempdir) / filename
-                with open(temp_path, "wb") as temp_file:
-                    temp_file.write(contents)
+                file_payloads.append((upload.filename or "", contents))
 
-                dest_path = staging_dir / filename
-                with open(dest_path, "wb") as dest_file:
-                    dest_file.write(contents)
-                saved_files.append(filename)
+            try:
+                validate_uploads(file_payloads)
+            except ValueError as exc:
+                set_flash(request, str(exc), "error")
+                return RedirectResponse(url=redirect_url, status_code=status.HTTP_302_FOUND)
+
+            saved_files = persist_bytes(
+                staging_dir,
+                Path(product.tempdir),
+                file_payloads,
+            )
 
             if not saved_files:
                 set_flash(request, "Images could not be processed. Please retry.", "error")
@@ -480,6 +537,9 @@ async def create_product_route(
                 photo_path = final_dir / filename
                 if photo_path.exists():
                     final_photo_paths.append(str(photo_path.relative_to(DATA_DIR)))
+            analysis_file = final_dir / ANALYSIS_FILENAME
+            if analysis_file.exists():
+                analysis_file.unlink(missing_ok=True)
         else:
             final_dir.mkdir(parents=True, exist_ok=True)
 
@@ -542,12 +602,116 @@ async def create_product_route(
             product.clean_tempdir()
         except Exception:
             pass
-        if has_photos and staging_dir.exists():
+        if has_photos and not using_session and staging_dir.exists():
             shutil.rmtree(staging_dir, ignore_errors=True)
-        if product_id is None and base_dir.exists() and not any(base_dir.iterdir()):
+        if (
+            product_id is None
+            and not using_session
+            and base_dir.exists()
+            and not any(base_dir.iterdir())
+        ):
             shutil.rmtree(base_dir, ignore_errors=True)
 
     return RedirectResponse(url=redirect_url, status_code=status.HTTP_302_FOUND)
+
+
+@app.post(
+    "/pickups/{pickup_number}/pallets/{cod_assets}/products/analyze",
+    response_class=JSONResponse,
+)
+async def analyze_product_photos(
+    request: Request,
+    pickup_number: int,
+    cod_assets: int,
+    photos: Optional[List[UploadFile]] = File(None),
+):
+    user, redirect_resp = ensure_access(
+        request, allowed_roles=("employee", "supervisor", "admin")
+    )
+    if redirect_resp:
+        return JSONResponse({"status": "error", "message": "Unauthorized."}, status_code=403)
+
+    uploads = [upload for upload in (photos or []) if upload and upload.filename]
+    if not uploads:
+        return JSONResponse({"status": "error", "message": "Please add at least one image."}, status_code=400)
+
+    file_payloads: List[Tuple[str, bytes]] = []
+    for upload in uploads:
+        contents = await upload.read()
+        file_payloads.append((upload.filename or "", contents))
+
+    try:
+        validate_uploads(file_payloads)
+    except ValueError as exc:
+        return JSONResponse({"status": "error", "message": str(exc)}, status_code=400)
+
+    subcategory_options = iassets.get_subcategory_suggestions()
+    destiny_options = iassets.get_destiny_options()
+
+    session_id, session_dir = begin_session(pickup_number, cod_assets)
+    product = Product(created_by=user["username"])
+    product.pickup = str(pickup_number)
+
+    try:
+        persist_bytes(session_dir, Path(product.tempdir), file_payloads)
+
+        await process_product_folder(
+            product,
+            subcategory_options=subcategory_options,
+            destiny_options=destiny_options,
+        )
+
+        data = product.description_json or {}
+        if isinstance(data, dict) and "commodity" in data and "subcategory" not in data:
+            legacy_value = data.pop("commodity")
+            if legacy_value:
+                data["subcategory"] = legacy_value
+
+        write_analysis(
+            session_dir,
+            description_json=data,
+            description_raw=product.description_raw or "",
+        )
+
+        suggestion_serial = (data.get("serial_number") or "").strip()
+        suggestion_asset_tag = (data.get("asset_tag") or "").strip()
+        suggestion_description = (data.get("short_description") or "").strip()
+        suggestion_subcategory = (data.get("subcategory") or "").strip()
+        suggestion_destiny = data.get("cod_destiny")
+        suggestion_destiny_label = (data.get("destination_label") or data.get("destination") or "").strip()
+        suggestion_reason = (data.get("destination_reason") or data.get("reason") or "").strip()
+
+        response_payload = {
+            "status": "ok",
+            "session": session_id,
+            "suggestions": {
+                "serial_number": suggestion_serial,
+                "asset_tag": suggestion_asset_tag,
+                "short_description": suggestion_description,
+                "subcategory": suggestion_subcategory,
+                "cod_destiny": suggestion_destiny,
+                "destination_label": suggestion_destiny_label,
+                "destination_reason": suggestion_reason,
+                "description_raw": product.description_raw or "",
+            },
+        }
+        return JSONResponse(response_payload)
+    except Exception:
+        logger.exception(
+            "Failed to analyze product images for pickup %s COD_ASSETS %s",
+            pickup_number,
+            cod_assets,
+        )
+        cleanup_session(session_dir)
+        return JSONResponse(
+            {"status": "error", "message": "Unable to analyze photos right now. Please retry."},
+            status_code=500,
+        )
+    finally:
+        try:
+            product.clean_tempdir()
+        except Exception:
+            pass
 
 @app.post(
     "/pickups/{pickup_number}/pallets/{cod_assets}/iassets/{row_id}/update",
