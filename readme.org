@@ -1,27 +1,23 @@
 #+title: Mr. Anderson — Warehouse Data Entry Assistant
 
-Mr. Anderson is a Telegram-based assistant that speeds up warehouse data entry. It lets a user snap product photos, uses OpenAI Vision to extract key fields (serial number, description, commodity, destination), and stores the results in SQLite with the images. A lightweight Flask web UI lists and previews saved products.
+Mr. Anderson is a FastAPI-based assistant that speeds up warehouse data entry. It lets operators upload product photos through the web dashboard, uses OpenAI Vision to extract key fields (serial number, description, subcategory, destination), and stores the results in SQLite alongside the processed images. A lightweight Flask web UI remains available for legacy product browsing.
 
 Status: early development (alpha). I’m iterating with a warehouse user to make this truly useful in day-to-day work.
 
 Features:
-- Telegram chat flow with inline menu (pickup → photos → analysis → review → submit)
+- FastAPI dashboard for managing pickups, pallets, and product entries
 - Vision model analysis of product photos via OpenAI
 - SQLite persistence with per-product image storage
 - Flask web UI to browse products and view images
 
 Directory layout:
-- run.py — convenience entrypoint that runs the Telegram bot
 - src/
   - __init__.py — package marker
-  - bot.py — bot wiring (handlers, polling)
-  - menu.py — inline UI, state machine, callbacks
-  - image.py — image handling (Telegram photo/document download)
-  - text.py — placeholder for text commands (currently unused in routing)
   - llm.py — OpenAI client, image upload, vision prompt, parsing
   - product.py — Product dataclass and asset tag generation
   - storage.py — SQLite schema, persistence, image copying
-  - webui.py — Flask app to list/view products and serve images
+  - webapp/ — FastAPI application (routes, templates, static assets)
+  - webui.py — legacy Flask app to list/view products and serve images
   - config.py — reads tokens from ~/.authinfo
 
 Generated at runtime:
@@ -29,37 +25,31 @@ Generated at runtime:
   - products.db — SQLite database
   - products/<asset_tag>/ — persisted images (copied from temp)
 
-Key flow:
-1) /start → set pickup → start product
-2) Send photos (as photo or image document) → Analyze
-3) Review/edit extracted fields → Submit
-4) Browse at [[http://localhost:9090]]
+Typical flow:
+1) Launch the FastAPI app and open the pallet detail view.
+2) Upload photos through the “Add product” sheet; the vision model proposes populated fields.
+3) Review/edit extracted fields, choose the correct destination/subcategory, then store the product.
+4) Browse saved products from the dashboard or the legacy Flask UI at [[http://localhost:9090]].
 
 * Setup
 
-After cloning the repository and setting up Python with the listed packages in [[environment.yml]], you need to configure the credentials used to communicate with Telegram and OpenAI.
-
-Configure the following credentials in ~/.authinfo (Emacs authinfo format):
+After cloning the repository and setting up Python with the listed packages in [[environment.yml]], configure the OpenAI credential in =~/.authinfo= (Emacs authinfo format):
 #+begin_src conf
-# Telegram bot token from @BotFather
-machine api.telegram.com login telegram-bot password YOUR_TELEGRAM_BOT_TOKEN
-
 # OpenAI API key (note the specific login expected by the code)
 machine api.openai.com login mister-anderson-bot password YOUR_OPENAI_API_KEY
 #+end_src
 
-The project can be run with two terminals, one controlling the Telegram bot, and the other serving the web interface. Start the Telegram bot with:
+Start the FastAPI web application with:
 #+begin_src sh
-python -m src.bot
+python -m src.webapp.app
+# Binds to 0.0.0.0:8000 (set PORT=8080 to override)
 #+end_src
 
-Start the web UI with:
+Optionally, you can launch the legacy Flask “products” browser in a separate terminal:
 #+begin_src sh
 python -m src.webui
 # Opens on 0.0.0.0:9090 (http://localhost:9090)
 #+end_src
-
-Add a whitelist file at =config/whitelist.txt= (one numeric Telegram user ID per line). The app reads =PROJECT/config/whitelist.txt= (=falls back to config/whitelist.example.txt=) and extracts numbers with a simple regex, so use one ID per line (comments OK). See the example file. To find your Telegram numeric ID use a helper bot like @userinfobot or check the bot logs (=update.effective_user.id= is logged/used). After editing or creating the whitelist file, restart the bot (e.g. python -m src.bot) because ALLOWED_USERS is loaded at import time.
 
 To add Web UI logins, define users in =~/.authinfo= under =machine mister-anderson-webui=. Each line creates a username/password pair accepted to login, for example:
 #+BEGIN_SRC text
@@ -69,25 +59,10 @@ machine mister-anderson-webui login bob password p@ssw0rd
 
 Restart the web UI after changes. For a persistent session secret, set the environment variable =WEBUI_SECRET= to a long random string; otherwise the app will fall back to an ephemeral key (or try to read login secret from the same machine entry—avoid using a real user named “secret”).
 
-* Usage - Telegram
-
-In Telegram:
-1. Start a chat with your bot and send /start.
-2. Set the pickup number.
-3. Tap “New Product” and send one or more product photos (either as photos or as image documents).
-4. Tap “Analyze Product” and wait for completion.
-5. Review the results; edit fields via the inline buttons if needed.
-6. Submit the product to save into SQLite and copy images into data/products/<asset_tag>/.
-
-Tips:
-- You can send multiple images; analysis runs in the background and notifies you when done.
-- Quantity and pickup expect digits; other fields are free text.
-- Asset tag is a short SHA1 based on the time the products was created and the user ID.
-
-* Usage - Web UI
+* Usage - Web Dashboard
 
 On a browser:
-1. Open [[http://localhost:9090]] to see recent products (ID, asset tag, pickup, qty, serial, commodity, destination, description).
+1. Open [[http://localhost:9090]] to see recent products (ID, asset tag, pickup, qty, serial, subcategory, destination, description).
 2. Click an asset tag to view metadata, raw JSON, and images (thumbnails link to full-size served files).
 
 * Explaining the Code
@@ -182,4 +157,3 @@ End-to-end: what happens when a product is saved
   data: {"new":["abc123..."],"count":..., "max_id":...}
 
 - The list page fetches new rows HTML; the detail page reloads if the current tag is in payload.new.
-

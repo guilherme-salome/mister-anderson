@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 
-import os, re, json, logging
+import os
+import re
+import logging
 
 logger = logging.getLogger(__name__)
 
@@ -11,40 +13,23 @@ logging.basicConfig(
 
 authinfo = os.path.join(os.path.expanduser("~"), ".authinfo")
 
-PROJECT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-DEFAULT_WHITELIST = os.path.join(PROJECT_DIR, "config", "whitelist.txt")
-EXAMPLE_WHITELIST = os.path.join(PROJECT_DIR, "config", "whitelist.example.txt")
 
+def read_token(machine: str, login: str | None = None) -> str:
+    if not os.path.isfile(authinfo):
+        raise FileNotFoundError(f"Credential store not found at {authinfo}")
 
-def read_token(machine='api.telegram.com', login=None):
     with open(authinfo) as f:
         for line in f:
-            if f"machine {machine}" in line:
-                if login is not None and f"login {login}" not in line:
-                    continue
-                m = re.search(r'password\s+(\S+)', line)
-                if m:
-                    return m.group(1)
-    raise ValueError(f"Telegram token not found for machine={machine} and login={login} in {authinfo}")
+            if f"machine {machine}" not in line:
+                continue
+            if login is not None and f"login {login}" not in line:
+                continue
+            match = re.search(r'password\s+(\S+)', line)
+            if match:
+                return match.group(1)
 
-
-def read_whitelist(path=None):
-    path = (
-        path
-        or (DEFAULT_WHITELIST if os.path.isfile(DEFAULT_WHITELIST) else EXAMPLE_WHITELIST)
-    )
-    logger.info(f"Whitelist source: {path}")
-    users = set()
-    if not path or not os.path.isfile(path):
-        return users
-    with open(path) as f:
-        for line in f:
-            m = re.search(r"\b\d+\b", line)
-            if m:
-                users.add(int(m.group(0)))
-    return users
-
-ALLOWED_USERS = read_whitelist()
+    target = f"machine={machine}" + (f" login={login}" if login else "")
+    raise ValueError(f"Credential not found for {target} in {authinfo}")
 
 
 def read_basic_users(machine='mister-anderson-webui'):
@@ -62,8 +47,9 @@ def read_basic_users(machine='mister-anderson-webui'):
 
 
 if __name__ == "__main__":
-    if read_token('api.telegram.com'):
-        logger.info("Found Telegram Token in %s", authinfo)
-    if read_token('api.openai.com'):
-        logger.info("Found OpenAI Token in %s", authinfo)
-    logger.debug("Whitelist contents: %s", read_whitelist())
+    try:
+        read_token('api.openai.com')
+    except Exception:
+        logger.warning("OpenAI credential not found in %s", authinfo)
+    else:
+        logger.info("Found OpenAI credential in %s", authinfo)

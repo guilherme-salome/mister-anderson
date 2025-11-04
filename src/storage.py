@@ -31,12 +31,19 @@ def init_db():
               pickup TEXT,
               serial_number TEXT,
               short_description TEXT,
-              commodity TEXT,
+              subcategory TEXT,
               destination TEXT,
               description_raw TEXT,
               photos TEXT
             )
         """)
+        # Backfill schema for legacy installs that still have `commodity`.
+        columns = {
+            row[1]: row[2]
+            for row in con.execute("PRAGMA table_info(products)")
+        }
+        if "subcategory" not in columns and "commodity" in columns:
+            con.execute("ALTER TABLE products ADD COLUMN subcategory TEXT")
         con.commit()
     finally:
         con.close()
@@ -80,7 +87,7 @@ def save_product_sqlite(product: Product):
         con.execute("""
             INSERT INTO products(
               asset_tag, created_by, created_at, quantity, pickup,
-              serial_number, short_description, commodity, destination,
+              serial_number, short_description, subcategory, destination,
               description_raw, photos
             ) VALUES(?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(asset_tag) DO UPDATE SET
@@ -90,7 +97,7 @@ def save_product_sqlite(product: Product):
               pickup=excluded.pickup,
               serial_number=excluded.serial_number,
               short_description=excluded.short_description,
-              commodity=excluded.commodity,
+              subcategory=excluded.subcategory,
               destination=excluded.destination,
               description_raw=excluded.description_raw,
               photos=excluded.photos
@@ -102,7 +109,7 @@ def save_product_sqlite(product: Product):
             product.pickup,
             product.serial_number,
             product.short_description,
-            product.commodity,
+            product.subcategory,
             product.destination,
             product.description_raw,
             photos_field,
@@ -111,6 +118,15 @@ def save_product_sqlite(product: Product):
         logger.info(f"Saved product {product.asset_tag} to {DB_PATH}")
     finally:
         con.close()
+
+def _normalize_row(row: sqlite3.Row) -> Dict[str, Any]:
+    record = dict(row)
+    if "subcategory" not in record and "commodity" in record:
+        record["subcategory"] = record.pop("commodity")
+    else:
+        record.pop("commodity", None)
+    return record
+
 
 def list_products(limit: int = 200) -> List[Dict[str, Any]]:
     init_db()
@@ -122,7 +138,7 @@ def list_products(limit: int = 200) -> List[Dict[str, Any]]:
             ORDER BY id DESC
             LIMIT ?
         """, (limit,)).fetchall()
-        return [dict(r) for r in rows]
+        return [_normalize_row(r) for r in rows]
     finally:
         con.close()
 
@@ -132,7 +148,7 @@ def get_product(asset_tag: str) -> Dict[str, Any]:
     con.row_factory = sqlite3.Row
     try:
         row = con.execute("SELECT * FROM products WHERE asset_tag = ?", (asset_tag,)).fetchone()
-        return dict(row) if row else {}
+        return _normalize_row(row) if row else {}
     finally:
         con.close()
 

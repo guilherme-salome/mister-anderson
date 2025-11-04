@@ -541,6 +541,12 @@ a {
   cursor: pointer;
 }
 
+.table-subtext {
+  display: block;
+  font-size: 0.75rem;
+  color: rgba(148, 163, 184, 0.72);
+}
+
 .pagination-bar {
   position: sticky;
   bottom: calc(var(--nav-height) + 16px);

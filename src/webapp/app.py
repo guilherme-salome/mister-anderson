@@ -293,22 +293,40 @@ async def create_product_route(
     sn: str = Form(""),
     asset_tag: str = Form(""),
     description: str = Form(""),
+    subcategory: str = Form(""),
+    cod_destiny: str = Form(""),
     photos: Optional[List[UploadFile]] = File(None),
 ):
     user, redirect_resp = ensure_access(request, allowed_roles=("employee", "supervisor", "admin"))
     if redirect_resp:
         return redirect_resp
 
+    redirect_url = f"/pickups/{pickup_number}/pallets/{cod_assets}"
+    subcategory_options = iassets.get_subcategory_suggestions()
+    destiny_options = iassets.get_destiny_options()
+    destiny_lookup: dict[int, str] = {}
+    for option in destiny_options:
+        if not isinstance(option, dict):
+            continue
+        code_raw = option.get("code")
+        label_raw = option.get("label")
+        try:
+            code_int = int(code_raw) if code_raw is not None else None
+        except (TypeError, ValueError):
+            code_int = None
+        label = (label_raw or "") if label_raw is not None else ""
+        if code_int is not None and label:
+            destiny_lookup[code_int] = label
+
     if quantity <= 0:
         set_flash(request, "Quantity must be greater than zero.", "error")
-        return RedirectResponse(
-            url=f"/pickups/{pickup_number}/pallets/{cod_assets}",
-            status_code=status.HTTP_302_FOUND,
-        )
+        return RedirectResponse(url=redirect_url, status_code=status.HTTP_302_FOUND)
 
     sn_value = (sn or "").strip()
     asset_tag_value = (asset_tag or "").strip()
     description_value = (description or "").strip()
+    subcategory_input = (subcategory or "").strip()
+    cod_destiny_input = (cod_destiny or "").strip()
 
     valid_files = [upload for upload in (photos or []) if upload and upload.filename]
     has_photos = bool(valid_files)
@@ -342,13 +360,14 @@ async def create_product_route(
 
             if not saved_files:
                 set_flash(request, "Images could not be processed. Please retry.", "error")
-                return RedirectResponse(
-                    url=f"/pickups/{pickup_number}/pallets/{cod_assets}",
-                    status_code=status.HTTP_302_FOUND,
-                )
+                return RedirectResponse(url=redirect_url, status_code=status.HTTP_302_FOUND)
 
             try:
-                await process_product_folder(product)
+                await process_product_folder(
+                    product,
+                    subcategory_options=subcategory_options,
+                    destiny_options=destiny_options,
+                )
             except Exception as exc:
                 logger.exception("Failed to process product images with LLM: %s", exc)
                 set_flash(
@@ -361,9 +380,17 @@ async def create_product_route(
             product.description_raw = ""
 
         data = product.description_json or {}
+        if isinstance(data, dict) and "commodity" in data and "subcategory" not in data:
+            legacy_value = data.pop("commodity")
+            if legacy_value:
+                data["subcategory"] = legacy_value
         llm_serial = (data.get("serial_number") or "").strip()
         llm_short = (data.get("short_description") or "").strip()
         llm_asset_tag = (data.get("asset_tag") or "").strip()
+        llm_subcategory = (data.get("subcategory") or "").strip()
+        llm_destination_label = (data.get("destination_label") or data.get("destination") or "").strip()
+        llm_destination_code = data.get("cod_destiny")
+        llm_reason = (data.get("destination_reason") or data.get("reason") or "").strip()
         description_raw = (product.description_raw or "").strip()
 
         if not sn_value:
@@ -372,6 +399,59 @@ async def create_product_route(
             description_value = llm_short or description_raw or ""
         if not asset_tag_value:
             asset_tag_value = llm_asset_tag or product.asset_tag
+
+        subcategory_value = iassets.canonicalize_subcategory(
+            subcategory_input,
+            suggestions=subcategory_options,
+        )
+        if not subcategory_value:
+            subcategory_value = iassets.canonicalize_subcategory(
+                llm_subcategory,
+                suggestions=subcategory_options,
+            )
+        if not subcategory_value and description_value:
+            subcategory_value = iassets.canonicalize_subcategory(
+                description_value,
+                suggestions=subcategory_options,
+            )
+
+        cod_destiny_value, cod_destiny_label = iassets.resolve_cod_destiny(
+            cod_destiny_input or None,
+            destiny_options=destiny_options,
+        )
+        if cod_destiny_value is None:
+            cod_destiny_value, cod_destiny_label = iassets.resolve_cod_destiny(
+                llm_destination_code,
+                destiny_options=destiny_options,
+                label_hint=llm_destination_label,
+            )
+        if cod_destiny_value is None:
+            cod_destiny_value, cod_destiny_label = iassets.resolve_cod_destiny(
+                llm_destination_label,
+                destiny_options=destiny_options,
+            )
+        if cod_destiny_value is not None and not cod_destiny_label:
+            try:
+                cod_destiny_label = destiny_lookup.get(int(cod_destiny_value))
+            except (TypeError, ValueError):
+                cod_destiny_label = destiny_lookup.get(cod_destiny_value)
+
+        reason_value = llm_reason
+
+        if not subcategory_value:
+            set_flash(request, "Subcategory is required. Please choose or enter a value.", "error")
+            return RedirectResponse(url=redirect_url, status_code=status.HTTP_302_FOUND)
+
+        subcategory_code_value, subcategory_label = iassets.resolve_subcategory_code(subcategory_value)
+        if subcategory_code_value is None:
+            set_flash(request, "Subcategory selection is invalid. Please pick an option from the list.", "error")
+            return RedirectResponse(url=redirect_url, status_code=status.HTTP_302_FOUND)
+        if subcategory_label:
+            subcategory_value = subcategory_label
+
+        if cod_destiny_value is None:
+            set_flash(request, "Destination is required. Please select a destination.", "error")
+            return RedirectResponse(url=redirect_url, status_code=status.HTTP_302_FOUND)
 
         product_id = create_product_entry(
             pickup_number=pickup_number,
@@ -382,6 +462,11 @@ async def create_product_route(
             description_raw=description_raw,
             created_by=user["username"],
             asset_tag=asset_tag_value,
+            subcategory=subcategory_value,
+            subcategory_code=subcategory_code_value,
+            cod_destiny=cod_destiny_value,
+            destination_label=cod_destiny_label,
+            reason=reason_value,
         )
 
         final_dir = base_dir / f"product_{product_id}"
@@ -408,9 +493,15 @@ async def create_product_route(
             "asset_tag": asset_tag_value,
             "description": description_value,
             "description_raw": description_raw,
+            "subcategory": subcategory_value,
+            "subcategory_code": subcategory_code_value,
+            "cod_destiny": cod_destiny_value,
+            "destination_label": cod_destiny_label,
+            "destination_reason": reason_value,
             "photos": final_photo_paths,
             "created_by": user["username"],
             "timestamp": datetime.utcnow().isoformat(timespec="seconds"),
+            "ai_payload": data,
         }
 
         try:
@@ -419,9 +510,22 @@ async def create_product_route(
         except Exception:  # pragma: no cover - best effort
             logger.warning("Failed to write metadata for product %s", product_id, exc_info=True)
 
-        summary = description_value or sn_value or asset_tag_value
-        if summary:
-            message = f"Product #{product_id} stored — {summary[:80]}"
+        summary_parts: List[str] = []
+        if description_value:
+            summary_parts.append(description_value[:72])
+        elif sn_value:
+            summary_parts.append(sn_value)
+        elif asset_tag_value:
+            summary_parts.append(asset_tag_value)
+        if subcategory_value:
+            summary_parts.append(f"Subcategory: {subcategory_value}")
+        if cod_destiny_label:
+            summary_parts.append(f"Destination: {cod_destiny_label}")
+        elif cod_destiny_value is not None:
+            summary_parts.append(f"Destination: #{cod_destiny_value}")
+
+        if summary_parts:
+            message = f"Product #{product_id} stored — {' · '.join(summary_parts[:3])}"
         else:
             message = f"Product #{product_id} stored."
         set_flash(request, message, "success")
@@ -443,10 +547,7 @@ async def create_product_route(
         if product_id is None and base_dir.exists() and not any(base_dir.iterdir()):
             shutil.rmtree(base_dir, ignore_errors=True)
 
-    return RedirectResponse(
-        url=f"/pickups/{pickup_number}/pallets/{cod_assets}",
-        status_code=status.HTTP_302_FOUND,
-    )
+    return RedirectResponse(url=redirect_url, status_code=status.HTTP_302_FOUND)
 
 @app.post(
     "/pickups/{pickup_number}/pallets/{cod_assets}/iassets/{row_id}/update",
@@ -504,6 +605,30 @@ async def pallet_detail(
         return redirect_resp
 
     items = iassets.fetch_pallet_items(pickup_number, cod_assets)
+    subcategory_options = iassets.get_subcategory_suggestions()
+    destiny_options = iassets.get_destiny_options()
+    destiny_lookup = {}
+    for option in destiny_options:
+        code = option.get("code")
+        label = option.get("label")
+        try:
+            key = int(code) if code is not None else None
+        except (TypeError, ValueError):
+            key = None
+        if key is not None and label:
+            destiny_lookup[key] = label
+
+    for item in items:
+        code_value = item.get("COD_DESTINY")
+        label_value = ""
+        try:
+            code_int = int(code_value) if code_value is not None else None
+        except (TypeError, ValueError):
+            code_int = None
+        if code_int is not None and code_int in destiny_lookup:
+            label_value = destiny_lookup[code_int]
+        item["COD_DESTINY_LABEL"] = label_value
+
     pallet_display_number: object = cod_assets if cod_assets not in (None, "") else "—"
     flash = consume_flash(request)
     ctx = {
@@ -517,6 +642,8 @@ async def pallet_detail(
         "flash": flash,
         "can_edit": user["role"] in ("employee", "supervisor", "admin"),
         "active_page": "pickups",
+        "subcategory_options": subcategory_options,
+        "destiny_options": destiny_options,
     }
     return templates.TemplateResponse("pallet_detail.html", ctx)
 

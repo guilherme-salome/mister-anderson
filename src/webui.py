@@ -79,7 +79,7 @@ LIST_TMPL = """
     <thead>
       <tr>
         <th>ID</th><th>Asset Tag</th><th>Pickup</th><th>Qty</th>
-        <th>Serial</th><th>Commodity</th><th>Destination</th><th>Short Description</th>
+        <th>Serial</th><th>Subcategory</th><th>Destination</th><th>Short Description</th>
       </tr>
     </thead>
     <tbody id="rows">
@@ -90,7 +90,7 @@ LIST_TMPL = """
         <td>{{ p["pickup"] or "" }}</td>
         <td>{{ p["quantity"] }}</td>
         <td>{{ p["serial_number"] or "" }}</td>
-        <td>{{ p["commodity"] or "" }}</td>
+        <td>{{ p["subcategory"] or "" }}</td>
         <td>{{ p["destination"] or "" }}</td>
         <td>{{ p["short_description"] or "" }}</td>
       </tr>
@@ -145,7 +145,7 @@ DETAIL_TMPL = """
     <div><strong>Pickup:</strong> {{ p["pickup"] or "" }}</div>
     <div><strong>Quantity:</strong> {{ p["quantity"] }}</div>
     <div><strong>Serial:</strong> {{ p["serial_number"] or "" }}</div>
-    <div><strong>Commodity:</strong> {{ p["commodity"] or "" }}</div>
+    <div><strong>Subcategory:</strong> {{ p["subcategory"] or "" }}</div>
     <div><strong>Destination:</strong> {{ p["destination"] or "" }}</div>
     <div><strong>Short Description:</strong> {{ p["short_description"] or "" }}</div>
     <div><strong>Created By:</strong> {{ p["created_by"] }}</div>
@@ -188,7 +188,7 @@ ROWS_TMPL = """
     <td>{{ p["pickup"] or "" }}</td>
     <td>{{ p["quantity"] }}</td>
     <td>{{ p["serial_number"] or "" }}</td>
-    <td>{{ p["commodity"] or "" }}</td>
+    <td>{{ p["subcategory"] or "" }}</td>
     <td>{{ p["destination"] or "" }}</td>
     <td>{{ p["short_description"] or "" }}</td>
   </tr>
@@ -336,5 +336,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-

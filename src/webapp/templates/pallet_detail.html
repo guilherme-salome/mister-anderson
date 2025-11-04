@@ -44,6 +44,8 @@
           <th>ASSET_TAG</th>
           <th>QUANTITY</th>
           <th>DESCRIPTION</th>
+          <th>SUBCATEGORY</th>
+          <th>Destination</th>
         </tr>
       </thead>
       <tbody>
@@ -56,10 +58,21 @@
             <td class="editable-iassets" data-field="ASSET_TAG" data-label="Asset tag">{{ item.ASSET_TAG or '' }}</td>
             <td class="editable-iassets" data-field="QUANTITY" data-label="Quantity">{{ item.QUANTITY or 0 }}</td>
             <td class="editable-iassets" data-field="DESCRIPTION" data-label="Description">{{ item.DESCRIPTION or '' }}</td>
+            <td data-label="Subcategory">{{ item.SUBCATEGORY or '—' }}</td>
+            <td data-label="Destination">
+              {% if item.COD_DESTINY_LABEL %}
+                {{ item.COD_DESTINY_LABEL }}
+                {% if item.COD_DESTINY %}<span class="table-subtext">#{{ item.COD_DESTINY }}</span>{% endif %}
+              {% elif item.COD_DESTINY %}
+                #{{ item.COD_DESTINY }}
+              {% else %}
+                —
+              {% endif %}
+            </td>
           </tr>
         {% else %}
           <tr>
-            <td colspan="7" style="text-align:center;">No products recorded in IASSETS for this pallet yet.</td>
+            <td colspan="9" style="text-align:center;">No products recorded in IASSETS for this pallet yet.</td>
           </tr>
         {% endfor %}
       </tbody>
@@ -93,6 +106,26 @@
           <div class="form-field">
             <label for="description">Description</label>
             <textarea id="description" name="description" rows="3" placeholder="Describe the product"></textarea>
+          </div>
+          <div class="form-field">
+            <label for="subcategory">Subcategory</label>
+            <input type="text" id="subcategory" name="subcategory" list="subcategory-options" placeholder="Commodity/subcategory" autocomplete="off">
+            <p class="form-help">Prefer an existing value; only create a new one when absolutely necessary.</p>
+          </div>
+          <datalist id="subcategory-options">
+            {% for option in subcategory_options %}
+              <option value="{{ option }}">
+            {% endfor %}
+          </datalist>
+          <div class="form-field">
+            <label for="cod_destiny">Destination</label>
+            <select id="cod_destiny" name="cod_destiny">
+              <option value="">Select destination</option>
+              {% for option in destiny_options %}
+                <option value="{{ option.code }}">{{ option.label }}</option>
+              {% endfor %}
+            </select>
+            <p class="form-help">Laptops, desktops, servers, and storage devices must go to DATA SANITIZATION (code 6).</p>
           </div>
           <fieldset class="form-field form-field--group">
             <legend>Photos</legend>

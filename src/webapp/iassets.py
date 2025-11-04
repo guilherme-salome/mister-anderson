@@ -2,10 +2,12 @@
 
 import os
 import logging
+import re
+import time
 from contextlib import contextmanager
 from datetime import datetime
 from threading import local
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from ..db.connect_access import connect_access
 
@@ -17,6 +19,15 @@ A1_ACCESS_PATH = os.path.join(DATA_DIR, "A1ASSETS_DATABASE.accdb")
 logger = logging.getLogger(__name__)
 
 _ACCESS_STATE = local()
+
+_HINT_CACHE_TTL = 600.0  # seconds
+_SUBCATEGORY_CACHE: Dict[str, object] = {
+    "timestamp": 0.0,
+    "values": (),
+    "label_lookup": {},
+    "code_lookup": {},
+}
+_DESTINY_CACHE: Dict[str, object] = {"timestamp": 0.0, "values": ()}
 
 
 @contextmanager
@@ -125,9 +136,263 @@ def _parse_positive_quantity(value: Optional[str]) -> int:
     return qty
 
 
+def _normalize_key(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", value.casefold())
+
+
+def _normalize_optional_string(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+    trimmed = value.strip()
+    return trimmed or None
+
+
+def _normalize_optional_int(value: Optional[object]) -> Optional[int]:
+    if value is None:
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        return int(text)
+    except (TypeError, ValueError):
+        return None
+
+
 def ensure_support_tables() -> None:
     """No-op placeholder retained for compatibility."""
     return
+
+
+def _refresh_subcategory_cache() -> None:
+    now = time.monotonic()
+    cache_ts = _SUBCATEGORY_CACHE.get("timestamp", 0.0)
+    if (now - float(cache_ts)) < _HINT_CACHE_TTL and _SUBCATEGORY_CACHE.get("values"):
+        return
+
+    label_lookup: Dict[str, Tuple[str, Optional[int]]] = {}
+    code_lookup: Dict[int, str] = {}
+    label_set: set[str] = set()
+
+    # Pull configured fee names from client commodity-based fee table.
+    try:
+        fee_rows = _fetch_access(
+            """
+            SELECT COMMODITYBASEDID, CommodityBased_name
+            FROM TBL_CLIENTS_COMMODITY_BASED_FEES
+            WHERE CommodityBased_name IS NOT NULL
+            """
+        )
+    except Exception:
+        logger.exception("Failed to fetch commodity fee names from Access.")
+        fee_rows = []
+
+    for row in fee_rows:
+        value = row.get("CommodityBased_name") or row.get("COMMODITYBASED_NAME")
+        label = _normalize_optional_string(str(value) if value is not None else None)
+        code_raw = row.get("COMMODITYBASEDID") or row.get("CommodityBasedID")
+        code = _normalize_optional_int(code_raw)
+        if not label:
+            continue
+        key = _normalize_key(label)
+        label_lookup[key] = (label, code)
+        label_set.add(label)
+        if code is not None:
+            code_lookup[code] = label
+
+    # Pull existing IASSETS subcategories to augment list.
+    try:
+        subcategory_rows = _fetch_access(
+            """
+            SELECT DISTINCT SUBCATEGORY
+            FROM IASSETS
+            WHERE SUBCATEGORY IS NOT NULL
+              AND Trim(CStr(SUBCATEGORY)) <> ''
+            """
+        )
+    except Exception:
+        logger.exception("Failed to fetch IASSETS subcategory values from Access.")
+        subcategory_rows = []
+
+    for row in subcategory_rows:
+        value = row.get("SUBCATEGORY")
+        code = _normalize_optional_int(value)
+        if code is not None:
+            label = code_lookup.get(code)
+            if label:
+                label_set.add(label)
+            else:
+                label = str(code)
+                label_set.add(label)
+                code_lookup.setdefault(code, label)
+                label_lookup.setdefault(_normalize_key(label), (label, code))
+            continue
+        label = _normalize_optional_string(str(value) if value is not None else None)
+        if not label:
+            continue
+        key = _normalize_key(label)
+        if key not in label_lookup:
+            label_lookup[key] = (label, None)
+        label_set.add(label)
+
+    combined = sorted(label_set, key=lambda text: text.casefold())
+    _SUBCATEGORY_CACHE["values"] = tuple(combined)
+    _SUBCATEGORY_CACHE["label_lookup"] = label_lookup
+    _SUBCATEGORY_CACHE["code_lookup"] = code_lookup
+    _SUBCATEGORY_CACHE["timestamp"] = now
+
+
+def get_subcategory_suggestions() -> List[str]:
+    _refresh_subcategory_cache()
+    values = _SUBCATEGORY_CACHE.get("values") or ()
+    return list(values)
+
+
+def _get_subcategory_lookups() -> Tuple[Dict[str, Tuple[str, Optional[int]]], Dict[int, str]]:
+    _refresh_subcategory_cache()
+    label_lookup = _SUBCATEGORY_CACHE.get("label_lookup") or {}
+    code_lookup = _SUBCATEGORY_CACHE.get("code_lookup") or {}
+    return label_lookup, code_lookup
+
+
+def resolve_subcategory_code(value: Optional[str]) -> Tuple[Optional[int], Optional[str]]:
+    label = _normalize_optional_string(value)
+    if not label:
+        return None, None
+    label_lookup, code_lookup = _get_subcategory_lookups()
+    key = _normalize_key(label)
+    entry = label_lookup.get(key)
+    if entry:
+        canonical_label, code = entry
+        return code, canonical_label
+    numeric = _normalize_optional_int(label)
+    if numeric is not None:
+        canonical_label = code_lookup.get(numeric) or str(numeric)
+        return numeric, canonical_label
+    return None, label
+
+
+def resolve_subcategory_label_from_code(code: Optional[object]) -> Optional[str]:
+    numeric = _normalize_optional_int(code)
+    if numeric is None:
+        return None
+    _, code_lookup = _get_subcategory_lookups()
+    return code_lookup.get(numeric) or str(numeric)
+
+
+def _refresh_destiny_cache() -> None:
+    now = time.monotonic()
+    cache_ts = _DESTINY_CACHE.get("timestamp", 0.0)
+    if (now - float(cache_ts)) < _HINT_CACHE_TTL and _DESTINY_CACHE.get("values"):
+        return
+
+    try:
+        rows = _fetch_access(
+            """
+            SELECT COD_DESTINY, DESTINY
+            FROM DESTINY
+            WHERE COD_DESTINY IS NOT NULL
+            ORDER BY DESTINY
+            """
+        )
+    except Exception:
+        logger.exception("Failed to fetch DESTINY lookup values from Access.")
+        rows = []
+
+    options: List[Dict[str, object]] = []
+    for row in rows:
+        code = _normalize_optional_int(row.get("COD_DESTINY"))
+        label_raw = row.get("DESTINY")
+        label = _normalize_optional_string(str(label_raw) if label_raw is not None else None)
+        if code is None or not label:
+            continue
+        options.append({"code": code, "label": label})
+    _DESTINY_CACHE["values"] = tuple(options)
+    _DESTINY_CACHE["timestamp"] = now
+
+
+def get_destiny_options() -> List[Dict[str, object]]:
+    _refresh_destiny_cache()
+    values = _DESTINY_CACHE.get("values") or ()
+    return [dict(item) for item in values]  # shallow copy to protect cache
+
+
+def canonicalize_subcategory(
+    value: Optional[str],
+    *,
+    suggestions: Optional[Iterable[str]] = None,
+) -> Optional[str]:
+    raw = _normalize_optional_string(value)
+    if not raw:
+        return None
+
+    candidates = suggestions or get_subcategory_suggestions()
+    key = _normalize_key(raw)
+    for option in candidates:
+        if _normalize_key(option) == key:
+            return option
+    return raw
+
+
+def resolve_cod_destiny(
+    value: Optional[object],
+    *,
+    destiny_options: Optional[Sequence[Dict[str, object]]] = None,
+    label_hint: Optional[str] = None,
+) -> Tuple[Optional[int], Optional[str]]:
+    options = destiny_options or get_destiny_options()
+    if not options:
+        return None, None
+
+    code_lookup: Dict[int, str] = {}
+    key_lookup: Dict[str, int] = {}
+    for option in options:
+        code = _normalize_optional_int(option.get("code"))
+        label = _normalize_optional_string(str(option.get("label")) if option.get("label") is not None else None)
+        if code is None or not label:
+            continue
+        code_lookup[code] = label
+        key_lookup[_normalize_key(label)] = code
+
+    resolved_code: Optional[int] = None
+    resolved_label: Optional[str] = None
+
+    def _try_from_candidate(candidate: Optional[object]) -> None:
+        nonlocal resolved_code, resolved_label
+        if candidate is None or resolved_code is not None:
+            return
+        if isinstance(candidate, int):
+            code = candidate
+        else:
+            code = _normalize_optional_int(candidate)
+        if code is not None and code in code_lookup:
+            resolved_code = code
+            resolved_label = code_lookup[code]
+            return
+        text = _normalize_optional_string(str(candidate) if candidate is not None else None)
+        if not text:
+            return
+        key = _normalize_key(text)
+        if key in key_lookup:
+            code = key_lookup[key]
+            resolved_code = code
+            resolved_label = code_lookup[code]
+            return
+        # attempt partial match
+        for lookup_key, code in key_lookup.items():
+            if lookup_key.startswith(key) or key.startswith(lookup_key):
+                resolved_code = code
+                resolved_label = code_lookup[code]
+                return
+
+    _try_from_candidate(value)
+    _try_from_candidate(label_hint)
+
+    return resolved_code, resolved_label
 
 
 def pickup_exists(pickup_number: int) -> bool:
@@ -335,6 +600,8 @@ def fetch_pallet_items(pickup_number: int, cod_assets: int) -> List[Dict[str, ob
             "DESCRIPTION",
             "SN",
             "ASSET_TAG",
+            "SUBCATEGORY",
+            "COD_DESTINY",
         ]
     )
     query = (
@@ -353,6 +620,8 @@ def fetch_pallet_items(pickup_number: int, cod_assets: int) -> List[Dict[str, ob
                 "DESCRIPTION": row.get("DESCRIPTION") or "",
                 "SN": row.get("SN") or "",
                 "ASSET_TAG": row.get("ASSET_TAG") or "",
+                "SUBCATEGORY": row.get("SUBCATEGORY") or "",
+                "COD_DESTINY": row.get("COD_DESTINY"),
                 "row_id": row.get("COD_IASSETS"),
             }
         )
@@ -370,54 +639,165 @@ def create_product_entry(
     created_by: Optional[str] = None,
     cod_assets_sqlite: Optional[int] = None,
     asset_tag: str = "",
+    subcategory: Optional[str] = None,
+    subcategory_code: Optional[int] = None,
+    cod_destiny: Optional[object] = None,
+    destination_label: Optional[str] = None,
+    cod_destiny_secondary: Optional[object] = None,
+    grade: Optional[object] = None,
+    reason: Optional[str] = None,
 ) -> int:
     if quantity <= 0:
         raise ValueError("Quantity must be greater than zero.")
 
-    timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
-    description = short_description or description_raw or ""
-    serial = serial_number or ""
+    logger.debug(
+        "create_product_entry called with raw values: pickup=%s cod_assets=%s quantity=%s "
+        "serial=%r short_description=%r description_raw=%r created_by=%r "
+        "cod_assets_sqlite=%r asset_tag=%r subcategory=%r subcategory_code=%r cod_destiny=%r "
+        "destination_label=%r cod_destiny_secondary=%r grade=%r reason=%r",
+        pickup_number,
+        cod_assets,
+        quantity,
+        serial_number,
+        short_description,
+        description_raw,
+        created_by,
+        cod_assets_sqlite,
+        asset_tag,
+        subcategory,
+        subcategory_code,
+        cod_destiny,
+        destination_label,
+        cod_destiny_secondary,
+        grade,
+        reason,
+    )
 
-    asset_tag_value = asset_tag.strip() if asset_tag else ""
-    cod_assets_value = cod_assets
+    now = datetime.utcnow()
+    timestamp = now.strftime("%Y-%m-%d %H:%M:%S")
+
+    description = _normalize_optional_string(short_description) or _normalize_optional_string(description_raw) or ""
+    serial = _normalize_optional_string(serial_number) or ""
+
+    asset_tag_value = _normalize_optional_string(asset_tag) or ""
+    subcategory_suggestions = get_subcategory_suggestions()
+    subcategory_label = canonicalize_subcategory(subcategory, suggestions=subcategory_suggestions)
+    subcategory_code_value = _normalize_optional_int(subcategory_code)
+    resolved_label: Optional[str] = None
+    if subcategory_code_value is None:
+        subcategory_code_value, resolved_label = resolve_subcategory_code(subcategory_label)
+    else:
+        resolved_label = resolve_subcategory_label_from_code(subcategory_code_value)
+    if resolved_label:
+        subcategory_label = resolved_label
+    destiny_options = get_destiny_options()
+    cod_destiny_value, cod_destiny_label = resolve_cod_destiny(
+        cod_destiny,
+        destiny_options=destiny_options,
+        label_hint=destination_label,
+    )
+    secondary_code, _ = resolve_cod_destiny(
+        cod_destiny_secondary,
+        destiny_options=destiny_options,
+        label_hint=destination_label,
+    )
+    if cod_destiny_value is not None:
+        cod_destiny_value = int(cod_destiny_value)
+    if secondary_code is not None:
+        secondary_code = int(secondary_code)
+
+    grade_value = _normalize_optional_int(grade)
+    reason_value = _normalize_optional_string(reason)
+
+    cod_assets_value = int(cod_assets)
+    pickup_value = int(pickup_number)
+
+    if subcategory_code_value is None:
+        raise ValueError("SUBCATEGORY is required for IASSETS entries.")
+    if cod_destiny_value is None:
+        raise ValueError("COD_DESTINY is required for IASSETS entries.")
+
+    cod_assets_sqlite_value = int(cod_assets_sqlite) if cod_assets_sqlite is not None else None
+
+    logger.debug(
+        "Normalized IASSETS values: pickup=%s cod_assets=%s quantity=%s cod_assets_sqlite=%r "
+        "serial=%r description=%r asset_tag=%r subcategory_code=%r subcategory_label=%r cod_destiny=%r "
+        "cod_destiny_label=%r cod_destiny_secondary=%r grade=%r reason=%r timestamp=%s",
+        pickup_value,
+        cod_assets_value,
+        quantity,
+        cod_assets_sqlite_value,
+        serial,
+        description,
+        asset_tag_value,
+        subcategory_code_value,
+        subcategory_label,
+        cod_destiny_value,
+        destination_label,
+        secondary_code,
+        grade_value,
+        reason_value,
+        timestamp,
+    )
 
     with _connect_access() as conn:
         cur = conn.cursor()
         try:
-            cur.execute(
-                """
-                INSERT INTO IASSETS (
-                    COD_ASSETS,
-                    COD_ASSETS_SQLITE,
-                    ASSET_TAG,
-                    PICKUP_NUMBER,
-                    QUANTITY,
-                    DESCRIPTION,
-                    SN,
-                    WEBCAM2,
-                    BATTERY2,
-                    PARTMISSING,
-                    DT,
-                    DT_UPDATE,
-                    FLAG,
-                    FLAG_SEND,
-                    UPLOAD_KYOZOU,
-                    PROCBY
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, ?, ?, 0, 0, 0, ?)
-                """,
-                (
-                    cod_assets_value,
-                    cod_assets_sqlite,
-                    asset_tag_value or None,
-                    pickup_number,
-                    quantity,
-                    description,
-                    serial,
-                    timestamp,
-                    timestamp,
-                    created_by or None,
-                ),
+            columns: List[Tuple[str, object]] = [
+                ("COD_ASSETS", cod_assets_value),
+                ("ASSET_TAG", asset_tag_value),
+                ("PICKUP_NUMBER", pickup_value),
+                ("QUANTITY", quantity),
+                ("DESCRIPTION", description),
+                ("SN", serial),
+                ("SUBCATEGORY", subcategory_code_value),
+                ("COD_DESTINY", cod_destiny_value),
+                ("WEBCAM2", 0),
+                ("BATTERY2", 0),
+                ("PARTMISSING", 0),
+                ("FLAG", 0),
+                ("FLAG_SEND", 0),
+                ("UPLOAD_KYOZOU", 0),
+                ("DT", timestamp),
+                ("DT_UPDATE", timestamp),
+            ]
+
+            if cod_assets_sqlite_value is not None:
+                columns.insert(1, ("COD_ASSETS_SQLITE", cod_assets_sqlite_value))
+            else:
+                logger.debug(
+                    "Omitting COD_ASSETS_SQLITE from IASSETS insert; will backfill after identity fetch."
+                )
+
+            if secondary_code is not None:
+                columns.append(("COD_DESTINY2", secondary_code))
+            if grade_value is not None:
+                columns.append(("GRADE", grade_value))
+            if reason_value:
+                columns.append(("REASON", reason_value))
+
+            column_names = ", ".join(name for name, _ in columns)
+            placeholders = ", ".join("?" for _ in columns)
+            params = tuple(value for _, value in columns)
+            query = f"INSERT INTO IASSETS ({column_names}) VALUES ({placeholders})"
+
+            logger.debug(
+                "Executing IASSETS insert query=%s bindings=%s",
+                query,
+                _summarize_params(columns),
             )
+            try:
+                cur.execute(
+                    query,
+                    params,
+                )
+            except Exception:
+                logger.exception(
+                    "IASSETS insert failed; query=%s, bindings=%s",
+                    query,
+                    _summarize_params(columns),
+                )
+                raise
             cur.execute("SELECT @@IDENTITY")
             row = cur.fetchone()
             new_id = int(row[0]) if row and row[0] is not None else 0
@@ -426,6 +806,18 @@ def create_product_entry(
                     "UPDATE IASSETS SET COD_ASSETS_SQLITE = ? WHERE COD_IASSETS = ?",
                     (new_id, new_id),
                 )
+                logger.debug(
+                    "Backfilled COD_ASSETS_SQLITE=%s for COD_IASSETS=%s after insert.",
+                    new_id,
+                    new_id,
+                )
+            logger.debug(
+                "IASSETS insert committed pickup=%s cod_assets=%s cod_iassets=%s cod_assets_sqlite_param=%r",
+                pickup_value,
+                cod_assets_value,
+                new_id,
+                cod_assets_sqlite,
+            )
             conn.commit()
         finally:
             cur.close()
@@ -492,3 +884,14 @@ def update_iassets_field(
             cur.close()
 
     return "" if value is None else str(value)
+def _summarize_params(bindings: Sequence[Tuple[str, object]]) -> List[Dict[str, object]]:
+    summary: List[Dict[str, object]] = []
+    for name, value in bindings:
+        summary.append(
+            {
+                "column": name,
+                "value": value,
+                "type": None if value is None else type(value).__name__,
+            }
+        )
+    return summary

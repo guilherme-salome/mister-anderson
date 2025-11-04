@@ -41,12 +41,49 @@ class Product:
         return self.description_json.get("short_description", "")
 
     @property
-    def commodity(self) -> str:
-        return self.description_json.get("commodity", "")
+    def destination(self) -> str:
+        return (
+            self.description_json.get("destination_label")
+            or self.description_json.get("destination", "")
+        )
 
     @property
-    def destination(self) -> str:
-        return self.description_json.get("destination", "")
+    def subcategory(self) -> str:
+        value = self.description_json.get("subcategory")
+        if value:
+            return value
+        legacy = self.description_json.pop("commodity", None)
+        if legacy:
+            self.description_json["subcategory"] = legacy
+            return legacy
+        return ""
+
+    @property
+    def cod_destiny(self) -> Optional[int]:
+        value = self.description_json.get("cod_destiny")
+        if value is None:
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    @property
+    def destination_reason(self) -> str:
+        return (
+            self.description_json.get("destination_reason")
+            or self.description_json.get("reason", "")
+        )
+
+    @property
+    def grade(self) -> Optional[int]:
+        value = self.description_json.get("grade")
+        if value is None:
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
 
     def __post_init__(self):
         logger.info(f"New Instance of {repr(self)}")
