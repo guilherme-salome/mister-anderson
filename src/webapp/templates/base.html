@@ -49,9 +49,38 @@
   {% endif %}
 
   {% if flash %}
-    <div class="toast toast--{{ flash.category }}" role="status" aria-live="polite">
+    <div
+      class="toast toast--{{ flash.category }} toast--transient is-active"
+      data-flash-toast
+      data-category="{{ flash.category }}"
+      role="status"
+      aria-live="polite"
+    >
       {{ flash.message }}
     </div>
+    <script>
+      (() => {
+        const toast = document.querySelector('[data-flash-toast]');
+        if (!toast) return;
+
+        let isRemoving = false;
+        const removeToast = () => {
+          if (isRemoving) return;
+          isRemoving = true;
+          toast.classList.remove('is-active');
+          window.setTimeout(() => {
+            toast.remove();
+          }, 220);
+        };
+
+        const autoDismiss = toast.dataset.category === 'success';
+        if (autoDismiss) {
+          window.setTimeout(removeToast, 1600);
+        }
+
+        toast.addEventListener('click', removeToast);
+      })();
+    </script>
   {% endif %}
 
   {% block scripts %}{% endblock %}
