@@ -34,49 +34,51 @@
   <section class="table-card responsive-table">
     <h2 class="section-title">IASSETS Entries</h2>
     <p class="section-lede">Tap a field to edit in place. Changes save automatically.</p>
-    <table id="iassets-entries">
-      <thead>
-        <tr>
-          <th>#</th>
-          <th>COD_ASSETS</th>
-          <th>COD_ASSETS_SQLITE</th>
-          <th>SN</th>
-          <th>ASSET_TAG</th>
-          <th>QUANTITY</th>
-          <th>DESCRIPTION</th>
-          <th>SUBCATEGORY</th>
-          <th>Destination</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for item in items %}
-          <tr data-row-id="{{ item.row_id }}">
-            <td data-label="Index">{{ loop.index }}</td>
-            <td data-label="COD_ASSETS">{{ item.COD_ASSETS or '—' }}</td>
-            <td data-label="COD_ASSETS_SQLITE">{{ item.COD_ASSETS_SQLITE or '—' }}</td>
-            <td class="editable-iassets" data-field="SN" data-label="Serial number">{{ item.SN or '' }}</td>
-            <td class="editable-iassets" data-field="ASSET_TAG" data-label="Asset tag">{{ item.ASSET_TAG or '' }}</td>
-            <td class="editable-iassets" data-field="QUANTITY" data-label="Quantity">{{ item.QUANTITY or 0 }}</td>
-            <td class="editable-iassets" data-field="DESCRIPTION" data-label="Description">{{ item.DESCRIPTION or '' }}</td>
-            <td data-label="Subcategory">{{ item.SUBCATEGORY or '—' }}</td>
-            <td data-label="Destination">
-              {% if item.COD_DESTINY_LABEL %}
-                {{ item.COD_DESTINY_LABEL }}
-                {% if item.COD_DESTINY %}<span class="table-subtext">#{{ item.COD_DESTINY }}</span>{% endif %}
-              {% elif item.COD_DESTINY %}
-                #{{ item.COD_DESTINY }}
-              {% else %}
-                —
-              {% endif %}
-            </td>
-          </tr>
-        {% else %}
+    <div class="responsive-table__wrapper">
+      <table id="iassets-entries">
+        <thead>
           <tr>
-            <td colspan="9" style="text-align:center;">No products recorded in IASSETS for this pallet yet.</td>
+            <th>#</th>
+            <th>COD_ASSETS</th>
+            <th>COD_ASSETS_SQLITE</th>
+            <th>SN</th>
+            <th>ASSET_TAG</th>
+            <th>QUANTITY</th>
+            <th>DESCRIPTION</th>
+            <th>SUBCATEGORY</th>
+            <th>Destination</th>
           </tr>
-        {% endfor %}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {% for item in items %}
+            <tr data-row-id="{{ item.row_id }}">
+              <td data-label="Index">{{ loop.index }}</td>
+              <td data-label="COD_ASSETS">{{ item.COD_ASSETS or '—' }}</td>
+              <td data-label="COD_ASSETS_SQLITE">{{ item.COD_ASSETS_SQLITE or '—' }}</td>
+              <td class="editable-iassets" data-field="SN" data-label="Serial number">{{ item.SN or '' }}</td>
+              <td class="editable-iassets" data-field="ASSET_TAG" data-label="Asset tag">{{ item.ASSET_TAG or '' }}</td>
+              <td class="editable-iassets" data-field="QUANTITY" data-label="Quantity">{{ item.QUANTITY or 0 }}</td>
+              <td class="editable-iassets" data-field="DESCRIPTION" data-label="Description">{{ item.DESCRIPTION or '' }}</td>
+              <td data-label="Subcategory">{{ item.SUBCATEGORY or '—' }}</td>
+              <td data-label="Destination">
+                {% if item.COD_DESTINY_LABEL %}
+                  {{ item.COD_DESTINY_LABEL }}
+                  {% if item.COD_DESTINY %}<span class="table-subtext">#{{ item.COD_DESTINY }}</span>{% endif %}
+                {% elif item.COD_DESTINY %}
+                  #{{ item.COD_DESTINY }}
+                {% else %}
+                  —
+                {% endif %}
+              </td>
+            </tr>
+          {% else %}
+            <tr>
+              <td colspan="9" style="text-align:center;">No products recorded in IASSETS for this pallet yet.</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
   </section>
 
   {% if can_edit %}
@@ -90,7 +92,10 @@
         <form method="post"
               action="/pickups/{{ pickup_number }}/pallets/{{ pallet_number }}/products"
               enctype="multipart/form-data"
-              class="form form--stacked">
+              class="form form--stacked"
+              data-product-form
+              data-pickup="{{ pickup_number }}"
+              data-pallet="{{ pallet_number }}">
           <div class="form-field">
             <label for="quantity">Quantity</label>
             <input type="number" id="quantity" name="quantity" min="1" value="1" required inputmode="numeric">
@@ -127,18 +132,29 @@
             </select>
             <p class="form-help">Laptops, desktops, servers, and storage devices must go to DATA SANITIZATION (code 6).</p>
           </div>
-          <fieldset class="form-field form-field--group">
-            <legend>Photos</legend>
-            <p class="form-help">Add photos to trigger AI suggestions instantly.</p>
-            <label class="upload-chip">
-              <span>Use camera</span>
-              <input type="file" name="photos" accept="image/*" capture="environment">
-            </label>
-            <label class="upload-chip">
-              <span>Upload from gallery</span>
-              <input type="file" name="photos" accept="image/*" multiple>
-            </label>
-          </fieldset>
+          <div class="form-field">
+            <label for="product-photos">Photos</label>
+            <input
+              type="file"
+              id="product-photos"
+              name="photos"
+              accept="image/*"
+              capture="environment"
+              multiple
+              class="visually-hidden"
+            >
+            <div class="photo-actions">
+              <label for="product-photos" class="button button--ghost button--block" data-photo-trigger>
+                Add product photos
+              </label>
+              <button type="button" class="button button--ghost button--block" data-photo-clear hidden>Clear photos</button>
+            </div>
+            <div class="photo-strip" data-photo-strip aria-live="polite"></div>
+            <p class="form-help" data-analysis-status aria-live="polite">
+              Add photos to trigger AI suggestions instantly.
+            </p>
+          </div>
+          <input type="hidden" name="upload_session_id" id="upload-session-id">
           <div class="form-actions">
             <button type="submit" class="button button--primary button--block">Store product</button>
           </div>
@@ -156,6 +172,9 @@
 
 {% block scripts %}
   {{ super() }}
+  {% if can_edit %}
+    <script src="{{ url_for('static', path='product-form.js') }}" defer></script>
+  {% endif %}
   {% if can_edit %}
     <script>
       (() => {
