@@ -36,6 +36,7 @@ from .iassets import (
     create_product_entry,
     delete_product_entry,
     update_iassets_field,
+    warm_access_connection,
 )
 from ..product import Product
 from ..llm import process_product_folder
@@ -125,6 +126,7 @@ def consume_flash(request: Request) -> Optional[dict]:
 async def startup_event():
     init_db()
     iassets.ensure_support_tables()
+    warm_access_connection()
     os.makedirs(TEMPLATES_DIR, exist_ok=True)
 
 

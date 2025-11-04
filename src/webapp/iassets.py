@@ -321,6 +321,15 @@ def get_destiny_options() -> List[Dict[str, object]]:
     return [dict(item) for item in values]  # shallow copy to protect cache
 
 
+def warm_access_connection() -> None:
+    """Prime Access caches so the first request avoids connection overhead."""
+    try:
+        get_subcategory_suggestions()
+        get_destiny_options()
+    except Exception:
+        logger.exception("Failed to warm Access connection.")
+
+
 def canonicalize_subcategory(
     value: Optional[str],
     *,
