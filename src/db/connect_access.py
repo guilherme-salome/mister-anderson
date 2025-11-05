@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 import os
-import sqlite3
 import logging
 import glob
 from contextlib import contextmanager
+import platform
+import sqlite3
 
 
 logging.basicConfig(
@@ -21,26 +22,44 @@ def find_ucanaccess_jars():
     return [*glob.glob(os.path.join(env, "*.jar")), *glob.glob(os.path.join(env, "lib", "*.jar"))]
 
 
-def connect_access(accdb_path: str, new_db: str = None):
-    """
-    Connect to Access .accdb via UCanAccess using jaydebeapi.
-    Requires:
-      - pip install jaydebeapi
-      - Java installed
-      - UCanAccess jars visible (set UCANACCESS_CLASSPATH to folder with jars)
-    If new_db is set, will create a new database using the version specified in new_db (e.g., "V2010").
-    """
+def _connect_via_ucanaccess(accdb_path: str, new_db: str | None = None):
     import jaydebeapi  # local import to avoid hard dep in callers
+
     jars = find_ucanaccess_jars()
     if not jars:
         raise RuntimeError("UCanAccess jars not found. Set UCANACCESS_CLASSPATH to the folder with /.jar files.")
-    url = f"jdbc:ucanaccess://{os.path.abspath(accdb_path)}" + \
-        (f";newdatabaseversion={new_db}" if new_db else "")
-    logger.debug("Connection URL: %s", url)
+    url = f"jdbc:ucanaccess://{os.path.abspath(accdb_path)}"
+    if new_db:
+        url += f";newdatabaseversion={new_db}"
+    logger.debug("Connecting to %s via UCanAccess", url)
     driver = "net.ucanaccess.jdbc.UcanaccessDriver"
-    conn = jaydebeapi.connect(driver, url, jars=jars)
-    logger.debug("Connected to %s", accdb_path)
-    return conn
+    return jaydebeapi.connect(driver, url, jars=jars)
+
+
+def _connect_via_pyodbc(accdb_path: str):
+    try:
+        import pyodbc  # type: ignore[import]
+    except ImportError as exc:
+        raise RuntimeError(
+            "pyodbc is required for Access connections on Windows. "
+            "Install it with `pip install pyodbc`."
+        ) from exc
+
+    conn_str = (
+        r"Driver={Microsoft Access Driver (*.mdb, *.accdb)};"
+        rf"Dbq={os.path.abspath(accdb_path)};"
+    )
+    logger.debug("Connecting to %s via pyodbc", accdb_path)
+    return pyodbc.connect(conn_str, autocommit=True)
+
+
+def connect_access(accdb_path: str, new_db: str | None = None):
+    """
+    Connect to Access .accdb. Uses native ACE driver on Windows and UCanAccess elsewhere.
+    """
+    if platform.system() == "Windows":
+        return _connect_via_pyodbc(accdb_path)
+    return _connect_via_ucanaccess(accdb_path, new_db)
 
 
 @contextmanager
