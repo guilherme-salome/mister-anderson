@@ -444,7 +444,7 @@ def list_pickups(
         f"""
         SELECT
             p.PICKUP_NUMBER,
-            NZ(pc.PALLET_COUNT, 0) AS PALLET_COUNT,
+            IIf(pc.PALLET_COUNT IS NULL, 0, pc.PALLET_COUNT) AS PALLET_COUNT,
             mv.MAX_DT
         FROM (
             SELECT PICKUP_NUMBER
@@ -465,7 +465,17 @@ def list_pickups(
             ON p.PICKUP_NUMBER = pc.PICKUP_NUMBER
         LEFT JOIN (
             SELECT PICKUP_NUMBER,
-                   MAX(NZ(dt_update, NZ(dt, NZ(dt_processed, dt_pickup)))) AS MAX_DT
+                   MAX(
+                       IIf(
+                           dt_update IS NULL,
+                           IIf(
+                               dt IS NULL,
+                               IIf(dt_processed IS NULL, dt_pickup, dt_processed),
+                               dt
+                           ),
+                           dt_update
+                       )
+                   ) AS MAX_DT
             FROM IASSETS
             WHERE PICKUP_NUMBER IS NOT NULL
             GROUP BY PICKUP_NUMBER
@@ -518,7 +528,17 @@ def list_pallets(pickup_number: int) -> List[Dict[str, object]]:
         SELECT
             COD_ASSETS,
             COUNT(*) AS TOTAL_ENTRIES,
-            MAX(NZ(dt_update, NZ(dt, NZ(dt_processed, dt_pickup)))) AS MAX_DT
+            MAX(
+                IIf(
+                    dt_update IS NULL,
+                    IIf(
+                        dt IS NULL,
+                        IIf(dt_processed IS NULL, dt_pickup, dt_processed),
+                        dt
+                    ),
+                    dt_update
+                )
+            ) AS MAX_DT
         FROM IASSETS
         WHERE PICKUP_NUMBER = ? AND COD_ASSETS IS NOT NULL
         GROUP BY COD_ASSETS
