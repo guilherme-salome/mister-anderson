@@ -144,12 +144,30 @@ a {
   font-size: 1rem;
   cursor: pointer;
   transition: transform 0.15s ease, background 0.15s ease;
+  text-decoration: none;
+}
+
+a.button:visited {
+  color: var(--color-text);
+  text-decoration: none;
+}
+
+a.button,
+.data-card__footer a {
+  text-decoration: none !important;
+}
+
+a.button:hover,
+a.button:focus,
+a.button:active {
+  text-decoration: none !important;
 }
 
 .button:hover,
 .button:focus-visible {
   transform: translateY(-1px);
   background: rgba(148, 163, 184, 0.24);
+  text-decoration: none;
 }
 
 .button:active {

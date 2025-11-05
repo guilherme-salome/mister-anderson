@@ -246,6 +246,12 @@ async def pickup_detail(request: Request, pickup_number: int):
         return redirect_resp
 
     pallets = iassets.list_pallets(pickup_number)
+    for pallet in pallets:
+        dt_text = pallet.get("DT_UPDATE")
+        if isinstance(dt_text, str) and dt_text:
+            pallet["DT_UPDATE_DATE"] = dt_text.split(" ", 1)[0]
+        else:
+            pallet["DT_UPDATE_DATE"] = None
     flash = consume_flash(request)
     ctx = {
         "request": request,
