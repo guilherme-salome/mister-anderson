@@ -211,7 +211,6 @@ def _refresh_subcategory_cache() -> None:
             SELECT DISTINCT SUBCATEGORY
             FROM IASSETS
             WHERE SUBCATEGORY IS NOT NULL
-              AND Trim(CStr(SUBCATEGORY)) <> ''
             """
         )
     except Exception:
