@@ -523,7 +523,7 @@ async def create_product_route(
             cod_assets=cod_assets,
             quantity=quantity,
             serial_number=sn_value,
-            short_description=llm_short,
+            short_description=description_value,
             description_raw=description_raw,
             created_by=user["username"],
             asset_tag=asset_tag_value,
