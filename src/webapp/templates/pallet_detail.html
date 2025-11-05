@@ -101,6 +101,28 @@
             <input type="number" id="quantity" name="quantity" min="1" value="1" required inputmode="numeric">
           </div>
           <div class="form-field">
+            <label for="product-photos">Photos</label>
+            <p class="form-help" data-analysis-status aria-live="polite">
+              Add photos to trigger AI suggestions instantly.
+            </p>
+            <input
+              type="file"
+              id="product-photos"
+              name="photos"
+              accept="image/*"
+              capture="environment"
+              multiple
+              class="visually-hidden"
+            >
+            <div class="photo-actions">
+              <label for="product-photos" class="button button--ghost button--block" data-photo-trigger>
+                Add product photos
+              </label>
+              <button type="button" class="button button--ghost button--block" data-photo-clear hidden>Clear photos</button>
+            </div>
+            <div class="photo-strip" data-photo-strip aria-live="polite"></div>
+          </div>
+          <div class="form-field">
             <label for="sn">Serial number</label>
             <input type="text" id="sn" name="sn" placeholder="Serial number" autocomplete="off">
           </div>
@@ -130,29 +152,6 @@
                 <option value="{{ option.code }}">{{ option.label }}</option>
               {% endfor %}
             </select>
-            <p class="form-help">Laptops, desktops, servers, and storage devices must go to DATA SANITIZATION (code 6).</p>
-          </div>
-          <div class="form-field">
-            <label for="product-photos">Photos</label>
-            <input
-              type="file"
-              id="product-photos"
-              name="photos"
-              accept="image/*"
-              capture="environment"
-              multiple
-              class="visually-hidden"
-            >
-            <div class="photo-actions">
-              <label for="product-photos" class="button button--ghost button--block" data-photo-trigger>
-                Add product photos
-              </label>
-              <button type="button" class="button button--ghost button--block" data-photo-clear hidden>Clear photos</button>
-            </div>
-            <div class="photo-strip" data-photo-strip aria-live="polite"></div>
-            <p class="form-help" data-analysis-status aria-live="polite">
-              Add photos to trigger AI suggestions instantly.
-            </p>
           </div>
           <input type="hidden" name="upload_session_id" id="upload-session-id">
           <div class="form-actions">
