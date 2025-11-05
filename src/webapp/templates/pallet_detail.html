@@ -7,29 +7,12 @@
     <button class="icon-button icon-button--ghost" onclick="window.history.back()" aria-label="Go back">←</button>
     <div>
       <h1 class="top-bar__title">Pallet {{ pallet_display_number }}</h1>
-      <p class="top-bar__subtitle">Pickup {{ pickup_number }}</p>
+      <p class="top-bar__subtitle">Pickup {{ pickup_number }} - Entries {{ items|length }}</p>
     </div>
   </div>
 {% endblock %}
 
 {% block content %}
-  <section class="card card--inset">
-    <h2 class="section-title">Pallet summary</h2>
-    <dl class="summary-list">
-      <div>
-        <dt>Pickup number</dt>
-        <dd>{{ pickup_number }}</dd>
-      </div>
-      <div>
-        <dt>COD_PALLET</dt>
-        <dd>{{ pallet_number }}</dd>
-      </div>
-      <div>
-        <dt>Entries recorded</dt>
-        <dd>{{ items|length }}</dd>
-      </div>
-    </dl>
-  </section>
 
   <section class="table-card responsive-table">
     <h2 class="section-title">IASSETS Entries</h2>
@@ -97,10 +80,6 @@
               data-pickup="{{ pickup_number }}"
               data-pallet="{{ pallet_number }}">
           <div class="form-field">
-            <label for="quantity">Quantity</label>
-            <input type="number" id="quantity" name="quantity" min="1" value="1" required inputmode="numeric">
-          </div>
-          <div class="form-field">
             <label for="product-photos">Photos</label>
             <p class="form-help" data-analysis-status aria-live="polite">
               Add photos to trigger AI suggestions instantly.
@@ -121,6 +100,10 @@
               <button type="button" class="button button--ghost button--block" data-photo-clear hidden>Clear photos</button>
             </div>
             <div class="photo-strip" data-photo-strip aria-live="polite"></div>
+          </div>
+          <div class="form-field">
+            <label for="quantity">Quantity</label>
+            <input type="number" id="quantity" name="quantity" min="1" value="1" required inputmode="numeric">
           </div>
           <div class="form-field">
             <label for="sn">Serial number</label>
