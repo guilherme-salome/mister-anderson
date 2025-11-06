@@ -9,4 +9,11 @@ dependencies:
   - setuptools
   - openai
   - nose
+  - flask
+  - jaydebeapi
+  - pandas
+  - yaml
+  - pyyaml
+  - fastapi
+  - pyodbc
 prefix: /Users/gui/miniforge3/envs/mister-anderson
