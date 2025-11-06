@@ -17,11 +17,11 @@ DEFAULT_DATA_ROOT = Path(__file__).resolve().parents[2] / "data"
 
 
 def _resolve_access_path(path: Optional[str] = None) -> Path:
-    candidate = path or os.environ.get("A1ASSETS_ACCESS_PATH")
+    candidate = path or os.environ.get("DB_PATH")
     if not candidate:
         raise RuntimeError(
             "Path to the Access database is not configured. "
-            "Provide it via --access-path=... or A1ASSETS_ACCESS_PATH."
+            "Provide it via environment DB_PATH."
         )
     resolved = Path(candidate).expanduser()
     if not resolved.exists():
