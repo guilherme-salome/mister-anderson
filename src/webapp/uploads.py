@@ -6,13 +6,13 @@ from typing import List, Optional, Sequence, Tuple
 from uuid import uuid4
 import re
 
-from .iassets import DATA_DIR
+from .iassets import PRODUCT_UPLOAD_DIR
 
 
 logger = logging.getLogger(__name__)
 
 
-UPLOAD_ROOT = Path(DATA_DIR) / "product_uploads"
+UPLOAD_ROOT = PRODUCT_UPLOAD_DIR
 SESSION_PREFIX = "session_"
 ANALYSIS_FILENAME = "analysis.json"
 ALLOWED_SUFFIXES = {".jpg", ".jpeg", ".png", ".heic", ".heif", ".webp"}

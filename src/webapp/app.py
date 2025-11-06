@@ -33,6 +33,7 @@ from .db import (
 from . import iassets
 from .iassets import (
     DATA_DIR,
+    PRODUCT_UPLOAD_DIR,
     create_product_entry,
     delete_product_entry,
     update_iassets_field,
@@ -70,7 +71,6 @@ app.add_middleware(
     same_site="lax",
 )
 
-PRODUCT_UPLOAD_DIR = Path(DATA_DIR) / "product_uploads"
 PRODUCT_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 

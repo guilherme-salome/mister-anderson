@@ -6,15 +6,32 @@ import re
 import time
 from contextlib import contextmanager
 from datetime import datetime
+from pathlib import Path
 from threading import local
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from ..db.connect_access import connect_access
 
 
-ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-DATA_DIR = os.path.join(ROOT_DIR, "data")
-A1_ACCESS_PATH = os.path.join(DATA_DIR, "A1ASSETS_DATABASE.accdb")
+DEFAULT_DATA_ROOT = Path(__file__).resolve().parents[2] / "data"
+
+
+def _resolve_access_path(path: Optional[str] = None) -> Path:
+    candidate = path or os.environ.get("A1ASSETS_ACCESS_PATH")
+    if not candidate:
+        raise RuntimeError(
+            "Path to the Access database is not configured. "
+            "Provide it via --access-path=... or A1ASSETS_ACCESS_PATH."
+        )
+    resolved = Path(candidate).expanduser()
+    if not resolved.exists():
+        raise FileNotFoundError(f"Access database not found at {resolved}")
+    return resolved
+
+
+ACCESS_PATH = _resolve_access_path()
+DATA_DIR = ACCESS_PATH.parent
+PRODUCT_UPLOAD_DIR = DATA_DIR / "product_uploads"
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +49,8 @@ _DESTINY_CACHE: Dict[str, object] = {"timestamp": 0.0, "values": ()}
 
 @contextmanager
 def _connect_access(path: Optional[str] = None):
-    db_path = path or os.environ.get("A1ASSETS_ACCESS_PATH", A1_ACCESS_PATH)
+    resolved_path = _resolve_access_path(path)
+    db_path = str(resolved_path)
     conn = getattr(_ACCESS_STATE, "conn", None)
     conn_path = getattr(_ACCESS_STATE, "path", None)
 

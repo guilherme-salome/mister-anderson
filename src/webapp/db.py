@@ -2,15 +2,16 @@
 
 import base64
 import hmac
-import os
 import sqlite3
 from datetime import datetime
 from hashlib import pbkdf2_hmac
 from typing import Dict, Iterable, Optional
+from pathlib import Path
+import os
 
-ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-DATA_DIR = os.path.join(ROOT_DIR, "data")
-DB_PATH = os.path.join(DATA_DIR, "webapp.sqlite")
+from .iassets import DATA_DIR
+
+DB_PATH = DATA_DIR / "webapp.sqlite"
 
 ALLOWED_ROLES = ("viewer", "employee", "supervisor", "admin")
 
@@ -49,7 +50,7 @@ def _password_matches(password: str, stored_hash: bytes, salt: bytes) -> bool:
 
 
 def init_db(seed_example: bool = True) -> None:
-    os.makedirs(DATA_DIR, exist_ok=True)
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
     with _connect() as conn:
         conn.execute(_CREATE_USERS_SQL)
         conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username ON users(username)")
