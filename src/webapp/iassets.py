@@ -806,6 +806,20 @@ def list_pallets(pickup_number: int) -> List[Dict[str, object]]:
     return sorted(pallets.values(), key=_sort_key)
 
 
+def get_warehouse_pallet_number(pickup_number: int, cod_assets: int) -> Optional[int]:
+    rows = _fetch_access(
+        """
+        SELECT TOP 1 PALLET
+        FROM ASSETS
+        WHERE PICKUP_NUMBER = ? AND COD_ASSETS = ?
+        """,
+        [pickup_number, cod_assets],
+    )
+    if not rows:
+        return None
+    return _normalize_optional_int(rows[0].get("PALLET"))
+
+
 def fetch_pickup_items(pickup_number: int, limit: Optional[int] = None) -> List[Dict[str, object]]:
     select_clause = ", ".join(
         [

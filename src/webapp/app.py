@@ -804,15 +804,24 @@ async def pallet_detail(
             label_value = destiny_lookup[code_int]
         item["COD_DESTINY_LABEL"] = label_value
 
-    pallet_display_number: object = cod_assets if cod_assets not in (None, "") else "—"
+    warehouse_pallet_number = iassets.get_warehouse_pallet_number(pickup_number, cod_assets)
     flash = consume_flash(request)
+    display_number: object
+    if warehouse_pallet_number is not None:
+        display_number = warehouse_pallet_number
+    elif cod_assets not in (None, ""):
+        display_number = cod_assets
+    else:
+        display_number = "—"
+
     ctx = {
         "request": request,
         "user": user,
         "pickup_number": pickup_number,
         "cod_assets": cod_assets,
         "pallet_number": cod_assets,
-        "pallet_display_number": pallet_display_number,
+        "pallet_display_number": display_number,
+        "warehouse_pallet_number": warehouse_pallet_number,
         "items": items,
         "flash": flash,
         "can_edit": user["role"] in ("employee", "supervisor", "admin"),
