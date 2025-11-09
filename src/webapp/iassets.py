@@ -598,6 +598,60 @@ def list_pickups(
     return result, total_count
 
 
+def get_pickup_client(pickup_number: int) -> Dict[str, Optional[object]]:
+    """Return client metadata (ID/name) for a pickup, if available."""
+
+    def _extract_client(row: Dict[str, object]) -> Dict[str, Optional[object]]:
+        client_id = _normalize_optional_int(
+            row.get("CLIENTID")
+            or row.get("ClientID")
+            or row.get("COD_CONSIGNER")
+        )
+        client_name = _normalize_optional_string(
+            row.get("CLIENTNAME")
+            or row.get("ClientName")
+        )
+        return {"client_id": client_id, "client_name": client_name}
+
+    queries = [
+        (
+            """
+            SELECT TOP 1
+                a.COD_CONSIGNER AS CLIENTID,
+                c.CLIENTNAME
+            FROM ASSETS AS a
+            LEFT JOIN TBL_CLIENTS AS c
+                ON c.CLIENTID = a.COD_CONSIGNER
+            WHERE a.PICKUP_NUMBER = ?
+            ORDER BY a.COD_ASSETS
+            """,
+            [pickup_number],
+        ),
+        (
+            """
+            SELECT
+                tp.COD_CONSIGNER AS CLIENTID,
+                c.CLIENTNAME
+            FROM TBL_PICKUP AS tp
+            LEFT JOIN TBL_CLIENTS AS c
+                ON c.CLIENTID = tp.COD_CONSIGNER
+            WHERE tp.PICKUP_NUMBER = ?
+            """,
+            [pickup_number],
+        ),
+    ]
+
+    for query, params in queries:
+        rows = _fetch_access(query, params)
+        if not rows:
+            continue
+        info = _extract_client(rows[0])
+        if info["client_id"] is not None or info["client_name"]:
+            return info
+
+    return {"client_id": None, "client_name": None}
+
+
 def create_pallet(
     pickup_number: int,
     cod_assets: int,

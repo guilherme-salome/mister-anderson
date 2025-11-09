@@ -7,7 +7,16 @@
     <button class="icon-button icon-button--ghost" onclick="window.history.back()" aria-label="Go back">←</button>
     <div>
       <h1 class="top-bar__title">Pickup {{ pickup_number }}</h1>
-      <p class="top-bar__subtitle">{{ pallets|length }} pallet{{ '' if pallets|length == 1 else 's' }} tracked</p>
+      <p class="top-bar__subtitle">
+        {% if client_id %}
+          Client {{ client_id }}
+          {% if user.role == 'admin' and client_name %}
+            ({{ client_name }})
+          {% endif %}
+          ·
+        {% endif %}
+        {{ pallets|length }} pallet{{ '' if pallets|length == 1 else 's' }} tracked
+      </p>
     </div>
   </div>
 {% endblock %}

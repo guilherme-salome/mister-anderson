@@ -245,6 +245,7 @@ async def pickup_detail(request: Request, pickup_number: int):
     if redirect_resp:
         return redirect_resp
 
+    client_info = iassets.get_pickup_client(pickup_number)
     pallets = iassets.list_pallets(pickup_number)
     for pallet in pallets:
         dt_text = pallet.get("DT_UPDATE")
@@ -259,6 +260,8 @@ async def pickup_detail(request: Request, pickup_number: int):
         "pickup_number": pickup_number,
         "pallets": pallets,
         "flash": flash,
+        "client_id": client_info.get("client_id"),
+        "client_name": client_info.get("client_name"),
         "can_edit": user["role"] in ("employee", "supervisor", "admin"),
         "active_page": "pickups",
     }
