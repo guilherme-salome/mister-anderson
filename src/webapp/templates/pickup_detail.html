@@ -37,6 +37,16 @@
         </header>
         <dl class="data-card__details">
           <div>
+            <dt>Weight</dt>
+            <dd>
+              {% if pallet.WEIGHT is not none %}
+                {{ '%.0f' % pallet.WEIGHT }}
+              {% else %}
+                —
+              {% endif %}
+            </dd>
+          </div>
+          <div>
             <dt>COD_ASSETS</dt>
             <dd>{{ pallet.COD_ASSETS or 'Unassigned' }}</dd>
           </div>

@@ -181,6 +181,20 @@ def _normalize_optional_int(value: Optional[object]) -> Optional[int]:
         return None
 
 
+def _normalize_optional_float(value: Optional[object]) -> Optional[float]:
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        return float(text)
+    except (TypeError, ValueError):
+        return None
+
+
 def ensure_support_tables() -> None:
     """No-op placeholder retained for compatibility."""
     return
@@ -686,6 +700,7 @@ def list_pallets(pickup_number: int) -> List[Dict[str, object]]:
             COD_SUBCONSIGNER,
             PALLET,
             DESCRIPTION,
+            WEIGHT,
             dt_update,
             dt,
             dt_processed,
@@ -719,6 +734,7 @@ def list_pallets(pickup_number: int) -> List[Dict[str, object]]:
             "COD_SUBCONSIGNER": _normalize_optional_int(row.get("COD_SUBCONSIGNER")),
             "PALLET_NUMBER": _normalize_optional_int(row.get("PALLET")),
             "PALLET_DESCRIPTION": row.get("DESCRIPTION"),
+            "WEIGHT": _normalize_optional_float(row.get("WEIGHT")),
             "source": "assets",
         }
 
@@ -767,6 +783,7 @@ def list_pallets(pickup_number: int) -> List[Dict[str, object]]:
                 "COD_CONSIGNER": None,
                 "COD_SUBCONSIGNER": None,
                 "PALLET_NUMBER": None,
+                "WEIGHT": None,
                 "source": "iassets",
             }
             continue
