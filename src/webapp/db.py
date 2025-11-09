@@ -2,14 +2,14 @@
 
 import base64
 import hmac
+import logging
+import os
 import sqlite3
 from datetime import datetime
 from hashlib import pbkdf2_hmac
 from typing import Dict, Iterable, Optional
-from pathlib import Path
-import os
 
-from .iassets import DATA_DIR
+from .iassets import ACCESS_PATH, DATA_DIR, _connect_access
 
 DB_PATH = DATA_DIR / "webapp.sqlite"
 
@@ -49,22 +49,31 @@ def _password_matches(password: str, stored_hash: bytes, salt: bytes) -> bool:
     return hmac.compare_digest(candidate, stored_hash)
 
 
-def init_db(seed_example: bool = True) -> None:
+def init_db(seed_example: bool = True, sync_from_access: bool = True) -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     with _connect() as conn:
         conn.execute(_CREATE_USERS_SQL)
         conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username ON users(username)")
-        if seed_example:
-            cur = conn.execute("SELECT COUNT(*) FROM users")
-            if cur.fetchone()[0] == 0:
-                _create_user(
-                    conn,
-                    username="admin",
-                    full_name="Administrator",
-                    password="admin123",
-                    role="admin",
-                    is_active=True,
-                )
+        conn.commit()
+    if seed_example:
+        _ensure_default_admin()
+    if sync_from_access:
+        sync_users_from_access()
+
+
+def _ensure_default_admin() -> None:
+    with _connect() as conn:
+        cur = conn.execute("SELECT COUNT(*) FROM users")
+        if cur.fetchone()[0] > 0:
+            return
+        _create_user(
+            conn,
+            username="admin",
+            full_name="Administrator",
+            password="admin123",
+            role="admin",
+            is_active=True,
+        )
         conn.commit()
 
 
@@ -106,6 +115,7 @@ def create_user(
     role: str = "viewer",
     is_active: bool = True,
 ) -> int:
+    """Create a user record in the webapp database."""
     with _connect() as conn:
         user_id = _create_user(
             conn,
@@ -117,6 +127,102 @@ def create_user(
         )
         conn.commit()
         return user_id
+
+
+def _upsert_user_from_access(
+    *,
+    username: str,
+    full_name: str,
+    password: str,
+    is_active: bool,
+    role: str = "employee",
+) -> None:
+    username_clean = username.strip().lower()
+    full_name_clean = full_name.strip()
+
+    with _connect() as conn:
+        cur = conn.execute(
+            "SELECT id, password_hash, password_salt, role, is_active FROM users WHERE username = ?",
+            (username_clean,),
+        )
+        row = cur.fetchone()
+        password_hash, salt = _hash_password(password)
+
+        if row:
+            conn.execute(
+                """
+                UPDATE users
+                SET full_name = ?, role = ?, is_active = ?, password_hash = ?, password_salt = ?, created_at = created_at
+                WHERE id = ?
+                """,
+                (
+                    full_name_clean,
+                    role,
+                    1 if is_active else 0,
+                    password_hash,
+                    salt,
+                    row["id"],
+                ),
+            )
+        else:
+            conn.execute(
+                """
+                INSERT INTO users (username, full_name, role, is_active, password_hash, password_salt, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    username_clean,
+                    full_name_clean,
+                    role,
+                    1 if is_active else 0,
+                    password_hash,
+                    salt,
+                    datetime.utcnow().isoformat(timespec="seconds"),
+                ),
+            )
+        conn.commit()
+
+
+def sync_users_from_access() -> None:
+    query = """
+        SELECT LOGIN, USUARIO, SENHA, ATIVADO
+        FROM USUARIOS
+        WHERE LOGIN IS NOT NULL AND TRIM(LOGIN) <> ''
+    """
+    try:
+        with _connect_access() as conn:
+            cur = conn.cursor()
+            cur.execute(query)
+            rows = cur.fetchall()
+    except Exception:
+        logger.exception("Failed to import users from Access USUARIOS table.")
+        return
+
+    for row in rows:
+        login = row[0] if isinstance(row, (tuple, list)) else row.get("LOGIN")
+        full_name = row[1] if isinstance(row, (tuple, list)) else row.get("USUARIO")
+        password = row[2] if isinstance(row, (tuple, list)) else row.get("SENHA")
+        activated = row[3] if isinstance(row, (tuple, list)) else row.get("ATIVADO")
+
+        if not login or not password:
+            continue
+
+        is_active = False
+        if isinstance(activated, str):
+            is_active = activated.strip() not in {"0", "N", "n", "false", "False"}
+        elif isinstance(activated, (int, float)):
+            is_active = bool(activated)
+        elif isinstance(activated, bool):
+            is_active = activated
+
+        _upsert_user_from_access(
+            username=str(login),
+            full_name=str(full_name or login),
+            password=str(password),
+            is_active=is_active,
+            role="employee",
+        )
+
 
 
 def authenticate(username: str, password: str) -> Optional[Dict[str, object]]:

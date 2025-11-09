@@ -422,17 +422,28 @@ def resolve_cod_destiny(
 
 
 def pickup_exists(pickup_number: int) -> bool:
-    rows = _fetch_access(
-        """
-        SELECT COUNT(*) AS total
-        FROM IASSETS
-        WHERE PICKUP_NUMBER = ?
-        """,
-        [pickup_number],
-    )
-    if rows and (rows[0].get("total") or rows[0].get("TOTAL")):
-        count = rows[0].get("total") or rows[0].get("TOTAL") or 0
-        if count:
+    """Return True if a pickup exists in ASSETS or IASSETS."""
+
+    def _has_matches(rows: List[Dict[str, object]]) -> bool:
+        if not rows:
+            return False
+        row = rows[0]
+        total = row.get("total") or row.get("TOTAL") or 0
+        try:
+            return int(total) > 0
+        except (TypeError, ValueError):
+            return False
+
+    for table in ("ASSETS", "IASSETS"):
+        rows = _fetch_access(
+            f"""
+            SELECT COUNT(*) AS total
+            FROM {table}
+            WHERE PICKUP_NUMBER = ?
+            """,
+            [pickup_number],
+        )
+        if _has_matches(rows):
             return True
     return False
 
@@ -452,13 +463,58 @@ def list_pickups(
     page = max(page, 1)
     pickups: Dict[int, Dict[str, object]] = {}
 
+    # Pull pickup metadata from ASSETS for full coverage.
+    assets_params: List[object] = []
+    assets_query = """
+        SELECT
+            PICKUP_NUMBER,
+            COUNT(*) AS PALLET_COUNT,
+            MIN(COD_CONSIGNER) AS COD_CONSIGNER,
+            MIN(COD_SUBCONSIGNER) AS COD_SUBCONSIGNER,
+            MAX(
+                IIf(
+                    dt_update IS NULL,
+                    IIf(
+                        dt IS NULL,
+                        IIf(dt_processed IS NULL, dt_pickup, dt_processed),
+                        dt
+                    ),
+                    dt_update
+                )
+            ) AS MAX_DT
+        FROM ASSETS
+        WHERE PICKUP_NUMBER IS NOT NULL
+    """
+    if pickup_query is not None:
+        assets_query += " AND PICKUP_NUMBER = ?"
+        assets_params.append(pickup_query)
+    assets_query += " GROUP BY PICKUP_NUMBER"
+
+    assets_rows = _fetch_access(assets_query, assets_params)
+
+    for row in assets_rows:
+        pickup_number = _normalize_optional_int(row.get("PICKUP_NUMBER"))
+        if pickup_number is None:
+            continue
+        total_pallets = row.get("PALLET_COUNT") or row.get("pallet_count") or 0
+        dt_update = _normalize_timestamp(row.get("MAX_DT") or row.get("max_dt"))
+        pickups[pickup_number] = {
+            "PICKUP_NUMBER": pickup_number,
+            "TOTAL_PALLETS": int(total_pallets or 0),
+            "DT_UPDATE": dt_update,
+            "COD_CONSIGNER": _normalize_optional_int(row.get("COD_CONSIGNER")),
+            "COD_SUBCONSIGNER": _normalize_optional_int(row.get("COD_SUBCONSIGNER")),
+            "source": "assets",
+        }
+
+    # Add/augment pickup metadata from IASSETS so pickups without ASSETS coverage still appear.
+    iassets_params: List[object] = []
     where_clause = ""
-    params: List[object] = []
     if pickup_query is not None:
         where_clause = "WHERE p.PICKUP_NUMBER = ?"
-        params.append(pickup_query)
+        iassets_params.append(pickup_query)
 
-    access_rows = _fetch_access(
+    iassets_rows = _fetch_access(
         f"""
         SELECT
             p.PICKUP_NUMBER,
@@ -502,25 +558,35 @@ def list_pickups(
         {where_clause}
         ORDER BY p.PICKUP_NUMBER DESC
         """,
-        params,
+        iassets_params,
     )
 
-    for row in access_rows:
-        pickup_number = row.get("PICKUP_NUMBER") or row.get("pickup_number")
+    for row in iassets_rows:
+        pickup_number = _normalize_optional_int(row.get("PICKUP_NUMBER") or row.get("pickup_number"))
         if pickup_number is None:
-            continue
-        try:
-            pickup_key = int(pickup_number)
-        except (TypeError, ValueError):
             continue
         total_pallets = row.get("PALLET_COUNT") or row.get("pallet_count") or 0
         dt_update = _normalize_timestamp(row.get("MAX_DT") or row.get("max_dt"))
-        pickups[pickup_key] = {
-            "PICKUP_NUMBER": pickup_key,
-            "TOTAL_PALLETS": int(total_pallets or 0),
-            "DT_UPDATE": dt_update,
-            "source": "iassets",
-        }
+        entry = pickups.get(pickup_number)
+        if entry is None:
+            pickups[pickup_number] = {
+                "PICKUP_NUMBER": pickup_number,
+                "TOTAL_PALLETS": int(total_pallets or 0),
+                "DT_UPDATE": dt_update,
+                "COD_CONSIGNER": None,
+                "COD_SUBCONSIGNER": None,
+                "source": "iassets",
+            }
+            continue
+        try:
+            pallets_int = int(total_pallets or 0)
+        except (TypeError, ValueError):
+            pallets_int = entry.get("TOTAL_PALLETS", 0) or 0
+        entry["TOTAL_PALLETS"] = max(int(entry.get("TOTAL_PALLETS") or 0), pallets_int)
+        existing_dt = entry.get("DT_UPDATE")
+        if dt_update and (not existing_dt or dt_update > existing_dt):
+            entry["DT_UPDATE"] = dt_update
+        entry["source"] = "assets+iassets"
 
     ordered_keys = sorted(pickups.keys(), reverse=True)
     total_count = len(ordered_keys)
@@ -541,6 +607,67 @@ def create_pallet(
     raise NotImplementedError("Pallets must be created through the external workflow.")
 
 def list_pallets(pickup_number: int) -> List[Dict[str, object]]:
+    def _dict_key(raw_value: object) -> Optional[object]:
+        normalized = _normalize_optional_int(raw_value)
+        if normalized is not None:
+            return normalized
+        if raw_value in (None, ""):
+            return None
+        return str(raw_value)
+
+    def _first_timestamp(*values: Any) -> Optional[str]:
+        for candidate in values:
+            normalized = _normalize_timestamp(candidate)
+            if normalized:
+                return normalized
+        return None
+
+    pallets: Dict[object, Dict[str, object]] = {}
+
+    asset_rows = _fetch_access(
+        """
+        SELECT
+            COD_ASSETS,
+            COD_CONSIGNER,
+            COD_SUBCONSIGNER,
+            PALLET,
+            DESCRIPTION,
+            dt_update,
+            dt,
+            dt_processed,
+            dt_pickup
+        FROM ASSETS
+        WHERE PICKUP_NUMBER = ?
+        """,
+        [pickup_number],
+    )
+
+    for row in asset_rows:
+        key = _dict_key(row.get("COD_ASSETS"))
+        if key is None:
+            continue
+        cod_assets_value = _normalize_optional_int(row.get("COD_ASSETS"))
+        cod_assets_display = (
+            cod_assets_value
+            if cod_assets_value is not None
+            else row.get("COD_ASSETS")
+        )
+        pallets[key] = {
+            "COD_ASSETS": cod_assets_display,
+            "TOTAL_ENTRIES": 0,
+            "DT_UPDATE": _first_timestamp(
+                row.get("dt_update"),
+                row.get("dt"),
+                row.get("dt_processed"),
+                row.get("dt_pickup"),
+            ),
+            "COD_CONSIGNER": _normalize_optional_int(row.get("COD_CONSIGNER")),
+            "COD_SUBCONSIGNER": _normalize_optional_int(row.get("COD_SUBCONSIGNER")),
+            "PALLET_NUMBER": _normalize_optional_int(row.get("PALLET")),
+            "PALLET_DESCRIPTION": row.get("DESCRIPTION"),
+            "source": "assets",
+        }
+
     aggregated = _fetch_access(
         """
         SELECT
@@ -564,41 +691,48 @@ def list_pallets(pickup_number: int) -> List[Dict[str, object]]:
         [pickup_number],
     )
 
-    pallets: List[Dict[str, object]] = []
     for row in aggregated:
-        cod_assets_value = row.get("COD_ASSETS") or row.get("cod_assets")
-        if cod_assets_value in (None, ""):
+        cod_assets_raw = row.get("COD_ASSETS") or row.get("cod_assets")
+        key = _dict_key(cod_assets_raw)
+        if key is None:
             continue
-        try:
-            numeric_cod_assets = int(cod_assets_value)
-            display_cod_assets = numeric_cod_assets
-        except (TypeError, ValueError):
-            numeric_cod_assets = None
-            display_cod_assets = str(cod_assets_value)
         total_entries = row.get("TOTAL_ENTRIES") or row.get("total_entries") or 0
+        try:
+            total_entries_value = int(total_entries)
+        except (TypeError, ValueError):
+            total_entries_value = 0
         dt_update = _normalize_timestamp(row.get("MAX_DT") or row.get("max_dt"))
-        pallets.append(
-            {
-                "COD_ASSETS": display_cod_assets,
-                "COD_ASSETS_NUMERIC": numeric_cod_assets,
-            "TOTAL_ENTRIES": total_entries or 0,
-            "DT_UPDATE": dt_update,
-            "source": "iassets",
+        entry = pallets.get(key)
+        if entry is None:
+            cod_assets_value = _normalize_optional_int(cod_assets_raw)
+            cod_assets_display = cod_assets_value if cod_assets_value is not None else cod_assets_raw
+            pallets[key] = {
+                "COD_ASSETS": cod_assets_display,
+                "TOTAL_ENTRIES": total_entries_value,
+                "DT_UPDATE": dt_update,
+                "COD_CONSIGNER": None,
+                "COD_SUBCONSIGNER": None,
+                "PALLET_NUMBER": None,
+                "source": "iassets",
             }
-        )
+            continue
+
+        entry["TOTAL_ENTRIES"] = total_entries_value
+        existing_dt = entry.get("DT_UPDATE")
+        if dt_update and (not existing_dt or dt_update > existing_dt):
+            entry["DT_UPDATE"] = dt_update
+        entry["source"] = "assets+iassets"
 
     def _sort_key(entry: Dict[str, object]) -> tuple:
-        cod_assets_int = entry.get("COD_ASSETS_NUMERIC")
-        fallback = entry.get("COD_ASSETS")
-        return (
-            cod_assets_int if cod_assets_int is not None else float("inf"),
-            fallback,
-        )
+        pallet_number = _normalize_optional_int(entry.get("PALLET_NUMBER"))
+        cod_assets_value = _normalize_optional_int(entry.get("COD_ASSETS"))
+        fallback = str(entry.get("COD_ASSETS") or "")
+        primary = pallet_number if pallet_number is not None else cod_assets_value
+        if primary is None:
+            primary = float("inf")
+        return (primary, fallback)
 
-    ordered = sorted(pallets, key=_sort_key)
-    for entry in ordered:
-        entry.pop("COD_ASSETS_NUMERIC", None)
-    return ordered
+    return sorted(pallets.values(), key=_sort_key)
 
 
 def fetch_pickup_items(pickup_number: int, limit: Optional[int] = None) -> List[Dict[str, object]]:
