@@ -19,13 +19,18 @@
       <article class="data-card">
         <header class="data-card__header">
           <h2 class="data-card__title">
-            Pallet <span>{{ pallet.COD_ASSETS or 'Unassigned' }}</span>
+            {% set employee_pallet = pallet.PALLET_NUMBER if pallet.PALLET_NUMBER is not none else None %}
+            Pallet <span>{{ employee_pallet if employee_pallet is not none else '—' }}</span>
           </h2>
           <span class="data-card__meta">
             Updated {{ pallet.DT_UPDATE_DATE or "—" }}
           </span>
         </header>
         <dl class="data-card__details">
+          <div>
+            <dt>COD_ASSETS</dt>
+            <dd>{{ pallet.COD_ASSETS or 'Unassigned' }}</dd>
+          </div>
           <div>
             <dt>Total entries</dt>
             <dd>{{ pallet.TOTAL_ENTRIES or 0 }}</dd>
