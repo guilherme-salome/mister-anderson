@@ -200,7 +200,7 @@ def ensure_support_tables() -> None:
     return
 
 
-def _refresh_subcategory_cache() -> None:
+def _refresh_subcategory_cache(client_id: Optional[int] = None) -> None:
     now = time.monotonic()
     cache_ts = _SUBCATEGORY_CACHE.get("timestamp", 0.0)
     if (now - float(cache_ts)) < _HINT_CACHE_TTL and _SUBCATEGORY_CACHE.get("values"):
@@ -210,18 +210,35 @@ def _refresh_subcategory_cache() -> None:
     code_lookup: Dict[int, str] = {}
     label_set: set[str] = set()
 
-    # Pull configured fee names from client commodity-based fee table.
-    try:
-        fee_rows = _fetch_access(
-            """
-            SELECT COMMODITYBASEDID, CommodityBased_name
-            FROM TBL_CLIENTS_COMMODITY_BASED_FEES
-            WHERE CommodityBased_name IS NOT NULL
-            """
-        )
-    except Exception:
-        logger.exception("Failed to fetch commodity fee names from Access.")
-        fee_rows = []
+    # Fetch client's subcategories
+    fee_rows = []
+    if client_id:
+        try:
+            fee_rows = _fetch_access(
+                f"""
+                SELECT COMMODITYBASEDID, CommodityBased_name
+                FROM TBL_CLIENTS_COMMODITY_BASED_FEES
+                WHERE CommodityBased_name IS NOT NULL
+                AND ClientID = {client_id}
+                """
+            )
+        except Exception:
+            logger.exception("Failed to fetch commodity fee names from Access.")
+
+    # If no client specified or no information for client, default to client 527
+    if not client_id or not fee_rows:
+        logger.debug(f"No subcategories defined for client {client_id}, defaulting to client 527.")
+        try:
+            fee_rows = _fetch_access(
+                f"""
+                SELECT COMMODITYBASEDID, CommodityBased_name
+                FROM TBL_CLIENTS_COMMODITY_BASED_FEES
+                WHERE CommodityBased_name IS NOT NULL
+                AND ClientID = 527
+                """
+            )
+        except Exception:
+            logger.exception("Failed to fetch commodity fee names from Access.")
 
     for row in fee_rows:
         value = row.get("CommodityBased_name") or row.get("COMMODITYBASED_NAME")
@@ -249,27 +266,6 @@ def _refresh_subcategory_cache() -> None:
         logger.exception("Failed to fetch IASSETS subcategory values from Access.")
         subcategory_rows = []
 
-    for row in subcategory_rows:
-        value = row.get("SUBCATEGORY")
-        code = _normalize_optional_int(value)
-        if code is not None:
-            label = code_lookup.get(code)
-            if label:
-                label_set.add(label)
-            else:
-                label = str(code)
-                label_set.add(label)
-                code_lookup.setdefault(code, label)
-                label_lookup.setdefault(_normalize_key(label), (label, code))
-            continue
-        label = _normalize_optional_string(str(value) if value is not None else None)
-        if not label:
-            continue
-        key = _normalize_key(label)
-        if key not in label_lookup:
-            label_lookup[key] = (label, None)
-        label_set.add(label)
-
     combined = sorted(label_set, key=lambda text: text.casefold())
     _SUBCATEGORY_CACHE["values"] = tuple(combined)
     _SUBCATEGORY_CACHE["label_lookup"] = label_lookup
@@ -277,7 +273,7 @@ def _refresh_subcategory_cache() -> None:
     _SUBCATEGORY_CACHE["timestamp"] = now
 
 
-def get_subcategory_suggestions() -> List[str]:
+def get_subcategory_suggestions(client_id: Optional[int] = None) -> List[str]:
     _refresh_subcategory_cache()
     values = _SUBCATEGORY_CACHE.get("values") or ()
     return list(values)

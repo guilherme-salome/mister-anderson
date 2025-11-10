@@ -327,7 +327,8 @@ async def create_product_route(
         return redirect_resp
 
     redirect_url = f"/pickups/{pickup_number}/pallets/{cod_assets}"
-    subcategory_options = iassets.get_subcategory_suggestions()
+    client_info = iassets.get_pickup_client(pickup_number)
+    subcategory_options = iassets.get_subcategory_suggestions(client_info['client_id'])
     destiny_options = iassets.get_destiny_options()
     destiny_lookup: dict[int, str] = {}
     for option in destiny_options:
