@@ -328,7 +328,8 @@ async def create_product_route(
 
     redirect_url = f"/pickups/{pickup_number}/pallets/{cod_assets}"
     client_info = iassets.get_pickup_client(pickup_number)
-    subcategory_options = iassets.get_subcategory_suggestions(client_info['client_id'])
+    client_id = client_info.get("client_id")
+    subcategory_options = iassets.get_subcategory_suggestions(client_id)
     destiny_options = iassets.get_destiny_options()
     destiny_lookup: dict[int, str] = {}
     for option in destiny_options:
@@ -511,7 +512,10 @@ async def create_product_route(
             set_flash(request, "Subcategory is required. Please choose or enter a value.", "error")
             return RedirectResponse(url=redirect_url, status_code=status.HTTP_302_FOUND)
 
-        subcategory_code_value, subcategory_label = iassets.resolve_subcategory_code(subcategory_value)
+        subcategory_code_value, subcategory_label = iassets.resolve_subcategory_code(
+            subcategory_value,
+            client_id=client_id,
+        )
         if subcategory_code_value is None:
             set_flash(request, "Subcategory selection is invalid. Please pick an option from the list.", "error")
             return RedirectResponse(url=redirect_url, status_code=status.HTTP_302_FOUND)
@@ -536,6 +540,7 @@ async def create_product_route(
             cod_destiny=cod_destiny_value,
             destination_label=cod_destiny_label,
             reason=reason_value,
+            client_id=client_id,
         )
 
         final_dir = base_dir / f"product_{product_id}"
@@ -657,7 +662,9 @@ async def analyze_product_photos(
     except ValueError as exc:
         return JSONResponse({"status": "error", "message": str(exc)}, status_code=400)
 
-    subcategory_options = iassets.get_subcategory_suggestions()
+    client_info = iassets.get_pickup_client(pickup_number)
+    client_id = client_info.get("client_id")
+    subcategory_options = iassets.get_subcategory_suggestions(client_id)
     destiny_options = iassets.get_destiny_options()
 
     session_id, session_dir = begin_session(pickup_number, cod_assets)
@@ -781,7 +788,9 @@ async def pallet_detail(
         return redirect_resp
 
     items = iassets.fetch_pallet_items(pickup_number, cod_assets)
-    subcategory_options = iassets.get_subcategory_suggestions()
+    client_info = iassets.get_pickup_client(pickup_number)
+    client_id = client_info.get("client_id")
+    subcategory_options = iassets.get_subcategory_suggestions(client_id)
     destiny_options = iassets.get_destiny_options()
     destiny_lookup = {}
     for option in destiny_options:
@@ -829,6 +838,8 @@ async def pallet_detail(
         "active_page": "pickups",
         "subcategory_options": subcategory_options,
         "destiny_options": destiny_options,
+        "client_id": client_id,
+        "client_name": client_info.get("client_name"),
     }
     return templates.TemplateResponse("pallet_detail.html", ctx)
 

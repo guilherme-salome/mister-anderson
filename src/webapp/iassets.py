@@ -38,12 +38,9 @@ logger = logging.getLogger(__name__)
 _ACCESS_STATE = local()
 
 _HINT_CACHE_TTL = 600.0  # seconds
-_SUBCATEGORY_CACHE: Dict[str, object] = {
-    "timestamp": 0.0,
-    "values": (),
-    "label_lookup": {},
-    "code_lookup": {},
-}
+_DEFAULT_SUBCATEGORY_CLIENT_ID = 527
+_SubcategoryCacheEntry = Dict[str, object]
+_SUBCATEGORY_CACHE: Dict[Optional[int], _SubcategoryCacheEntry] = {}
 _DESTINY_CACHE: Dict[str, object] = {"timestamp": 0.0, "values": ()}
 
 
@@ -200,18 +197,21 @@ def ensure_support_tables() -> None:
     return
 
 
-def _refresh_subcategory_cache(client_id: Optional[int] = None) -> None:
+def _refresh_subcategory_cache(client_id: Optional[int] = None) -> _SubcategoryCacheEntry:
     now = time.monotonic()
-    cache_ts = _SUBCATEGORY_CACHE.get("timestamp", 0.0)
-    if (now - float(cache_ts)) < _HINT_CACHE_TTL and _SUBCATEGORY_CACHE.get("values"):
-        return
+    existing = _SUBCATEGORY_CACHE.get(client_id)
+    if existing:
+        cache_ts = float(existing.get("timestamp", 0.0))
+        if (now - cache_ts) < _HINT_CACHE_TTL and existing.get("values"):
+            return existing
 
     label_lookup: Dict[str, Tuple[str, Optional[int]]] = {}
     code_lookup: Dict[int, str] = {}
     label_set: set[str] = set()
 
-    # Fetch client's subcategories
-    fee_rows = []
+    fee_rows: List[Dict[str, object]] = []
+    source_client_id: Optional[int] = None
+
     if client_id:
         try:
             fee_rows = _fetch_access(
@@ -224,21 +224,36 @@ def _refresh_subcategory_cache(client_id: Optional[int] = None) -> None:
             )
         except Exception:
             logger.exception("Failed to fetch commodity fee names from Access.")
+        else:
+            if fee_rows:
+                source_client_id = client_id
 
-    # If no client specified or no information for client, default to client 527
-    if not client_id or not fee_rows:
-        logger.debug(f"No subcategories defined for client {client_id}, defaulting to client 527.")
+    fallback_client_id = None
+    if not fee_rows:
+        fallback_client_id = _DEFAULT_SUBCATEGORY_CLIENT_ID
+        fallback_entry = _SUBCATEGORY_CACHE.get(fallback_client_id)
+        if fallback_entry:
+            cache_ts = float(fallback_entry.get("timestamp", 0.0))
+            if (now - cache_ts) < _HINT_CACHE_TTL and fallback_entry.get("values"):
+                _SUBCATEGORY_CACHE[client_id] = fallback_entry
+                return fallback_entry
+        logger.debug(
+            "No subcategories defined for client %s, defaulting to client %s.",
+            client_id,
+            fallback_client_id,
+        )
         try:
             fee_rows = _fetch_access(
                 f"""
                 SELECT COMMODITYBASEDID, CommodityBased_name
                 FROM TBL_CLIENTS_COMMODITY_BASED_FEES
                 WHERE CommodityBased_name IS NOT NULL
-                AND ClientID = 527
+                AND ClientID = {fallback_client_id}
                 """
             )
         except Exception:
             logger.exception("Failed to fetch commodity fee names from Access.")
+        source_client_id = fallback_client_id
 
     for row in fee_rows:
         value = row.get("CommodityBased_name") or row.get("COMMODITYBASED_NAME")
@@ -253,44 +268,48 @@ def _refresh_subcategory_cache(client_id: Optional[int] = None) -> None:
         if code is not None:
             code_lookup[code] = label
 
-    # Pull existing IASSETS subcategories to augment list.
-    try:
-        subcategory_rows = _fetch_access(
-            """
-            SELECT DISTINCT SUBCATEGORY
-            FROM IASSETS
-            WHERE SUBCATEGORY IS NOT NULL
-            """
-        )
-    except Exception:
-        logger.exception("Failed to fetch IASSETS subcategory values from Access.")
-        subcategory_rows = []
-
     combined = sorted(label_set, key=lambda text: text.casefold())
-    _SUBCATEGORY_CACHE["values"] = tuple(combined)
-    _SUBCATEGORY_CACHE["label_lookup"] = label_lookup
-    _SUBCATEGORY_CACHE["code_lookup"] = code_lookup
-    _SUBCATEGORY_CACHE["timestamp"] = now
+    entry: _SubcategoryCacheEntry = {
+        "values": tuple(combined),
+        "label_lookup": label_lookup,
+        "code_lookup": code_lookup,
+        "timestamp": now,
+    }
+
+    keys_to_update = set()
+    if source_client_id is not None:
+        keys_to_update.add(source_client_id)
+    keys_to_update.add(client_id)
+    for key in keys_to_update:
+        _SUBCATEGORY_CACHE[key] = entry
+
+    return entry
 
 
 def get_subcategory_suggestions(client_id: Optional[int] = None) -> List[str]:
-    _refresh_subcategory_cache()
-    values = _SUBCATEGORY_CACHE.get("values") or ()
+    entry = _refresh_subcategory_cache(client_id)
+    values = entry.get("values") or ()
     return list(values)
 
 
-def _get_subcategory_lookups() -> Tuple[Dict[str, Tuple[str, Optional[int]]], Dict[int, str]]:
-    _refresh_subcategory_cache()
-    label_lookup = _SUBCATEGORY_CACHE.get("label_lookup") or {}
-    code_lookup = _SUBCATEGORY_CACHE.get("code_lookup") or {}
+def _get_subcategory_lookups(
+    client_id: Optional[int] = None,
+) -> Tuple[Dict[str, Tuple[str, Optional[int]]], Dict[int, str]]:
+    entry = _refresh_subcategory_cache(client_id)
+    label_lookup = entry.get("label_lookup") or {}
+    code_lookup = entry.get("code_lookup") or {}
     return label_lookup, code_lookup
 
 
-def resolve_subcategory_code(value: Optional[str]) -> Tuple[Optional[int], Optional[str]]:
+def resolve_subcategory_code(
+    value: Optional[str],
+    *,
+    client_id: Optional[int] = None,
+) -> Tuple[Optional[int], Optional[str]]:
     label = _normalize_optional_string(value)
     if not label:
         return None, None
-    label_lookup, code_lookup = _get_subcategory_lookups()
+    label_lookup, code_lookup = _get_subcategory_lookups(client_id)
     key = _normalize_key(label)
     entry = label_lookup.get(key)
     if entry:
@@ -303,11 +322,15 @@ def resolve_subcategory_code(value: Optional[str]) -> Tuple[Optional[int], Optio
     return None, label
 
 
-def resolve_subcategory_label_from_code(code: Optional[object]) -> Optional[str]:
+def resolve_subcategory_label_from_code(
+    code: Optional[object],
+    *,
+    client_id: Optional[int] = None,
+) -> Optional[str]:
     numeric = _normalize_optional_int(code)
     if numeric is None:
         return None
-    _, code_lookup = _get_subcategory_lookups()
+    _, code_lookup = _get_subcategory_lookups(client_id)
     return code_lookup.get(numeric) or str(numeric)
 
 
@@ -907,6 +930,7 @@ def create_product_entry(
     cod_destiny_secondary: Optional[object] = None,
     grade: Optional[object] = None,
     reason: Optional[str] = None,
+    client_id: Optional[int] = None,
 ) -> int:
     if quantity <= 0:
         raise ValueError("Quantity must be greater than zero.")
@@ -941,14 +965,20 @@ def create_product_entry(
     serial = _normalize_optional_string(serial_number) or ""
 
     asset_tag_value = _normalize_optional_string(asset_tag) or ""
-    subcategory_suggestions = get_subcategory_suggestions()
+    subcategory_suggestions = get_subcategory_suggestions(client_id)
     subcategory_label = canonicalize_subcategory(subcategory, suggestions=subcategory_suggestions)
     subcategory_code_value = _normalize_optional_int(subcategory_code)
     resolved_label: Optional[str] = None
     if subcategory_code_value is None:
-        subcategory_code_value, resolved_label = resolve_subcategory_code(subcategory_label)
+        subcategory_code_value, resolved_label = resolve_subcategory_code(
+            subcategory_label,
+            client_id=client_id,
+        )
     else:
-        resolved_label = resolve_subcategory_label_from_code(subcategory_code_value)
+        resolved_label = resolve_subcategory_label_from_code(
+            subcategory_code_value,
+            client_id=client_id,
+        )
     if resolved_label:
         subcategory_label = resolved_label
     destiny_options = get_destiny_options()
