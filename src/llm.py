@@ -63,13 +63,16 @@ def _prepare_prompt(
     guidance_lines.append("Always choose a destination code from the provided list. If you cannot determine a match, pick the closest option and explain why in destination_reason.")
     guidance_lines.append("Items such as phones, tablets, usb drives, documents or hard drives MUST go to DATA SANITIZATION, which has code 6.")
     guidance_lines.append("Prefer subcategories from the provided list. Suggest a new subcategory only when none of the provided values fit.")
+    guidance_lines.append("short_description must be a search-friendly product line: brand + model + item type + size/capacity/power and standout features; stay under 20 words; avoid vague filler.")
+    guidance_lines.append("For appliances, lab, and medical devices, include measurable attributes from labels (e.g., volume, temperature range, voltage/phase/amps, pressure, RPM, material/stainless).")
+    guidance_lines.append("If several model or part numbers appear, pick the primary model tied to the brand; only mention alternatives when truly ambiguous.")
 
     prompt = textwrap.dedent(
         f"""
         Extract product information from the attached image(s) and respond with strict JSON (no code fences, no commentary).
         Required JSON keys:
           - serial_number: string (often found in labels with bar codes, commonly referred to 'service tag' or 'S/N')
-          - short_description: short marketing-ready description
+          - short_description: concise, search-ready description (brand + model + item type + key specs/size/power; <=20 words)
           - subcategory: value from `subcategory_options` when possible
           - cod_destiny: integer destination code
           - destination_label: matching text label for the selected destination
