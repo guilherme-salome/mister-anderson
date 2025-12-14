@@ -68,7 +68,7 @@ def _prepare_prompt(
         f"""
         Extract product information from the attached image(s) and respond with strict JSON (no code fences, no commentary).
         Required JSON keys:
-          - serial_number: string
+          - serial_number: string (often found in labels with bar codes, commonly referred to 'service tag' or 'S/N')
           - short_description: short marketing-ready description
           - subcategory: value from `subcategory_options` when possible
           - cod_destiny: integer destination code
